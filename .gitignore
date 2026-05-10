@@ -1,0 +1,65 @@
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.dvi
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.nav
+*.snm
+*.out
+*.run.xml
+*.synctex(busy)
+*.synctex.gz
+*.synctex.gz(busy)
+*.toc
+*.xdv
+*.vrb
+*.acn
+*.acr
+*.alg
+*.glg
+*.glo
+*.gls
+*.ist
+*.tdo
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.Spotlight-V100/
+.Trashes/
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python environments and caches
+.venv/
+venv/
+env/
+.env
+.env.*
+__pycache__/
+*.py[cod]
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Jupyter
+.ipynb_checkpoints/
