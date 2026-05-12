@@ -1,0 +1,65 @@
+\documentclass[UTF8, 11pt]{ctexart}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\setlist{leftmargin=*}
+\setlength{\parskip}{0.35em}
+\setlength{\parindent}{0pt}
+
+\title{\textbf{阶段 1：背景与相关工作}\\
+影响力最大化、子模优化与分布式多智能体决策}
+\author{Team Members: Name 1, Name 2, Name 3}
+\date{CS240: 算法设计与分析，2026 年春季学期}
+
+\begin{document}
+
+\maketitle
+
+\section{应用背景}
+
+影响力最大化研究如何在网络中选择少量初始种子节点，使信息、行为或控制信号通过边传播后覆盖尽可能多的节点。它可以用于社交网络营销、舆情传播、公共信息投放、虚假信息干预，也可以被理解为多智能体网络中的有限预算决策问题。
+
+该问题与分布式及大规模优化方向有直接联系。真实网络规模很大，单个中心节点未必能保存完整图结构或完成全部计算。多智能体系统中，每个 agent 通常只知道局部邻居和局部传播信息，但全局目标却依赖整个网络的传播结果。因此，影响力最大化提供了一个自然平台，用来讨论局部信息、通信约束、全局目标和近似优化之间的关系。
+
+\section{算法形式化}
+
+给定图 $G=(V,E)$ 和预算 $k$，影响力最大化问题要求选择 $S\subseteq V$，满足 $|S|\leq k$，并最大化期望影响范围：
+\[
+    \max_{S\subseteq V,\ |S|\leq k} \sigma(S).
+\]
+在独立级联模型中，每条边 $(u,v)$ 有传播概率 $p_{uv}$。当 $u$ 被激活后，它有一次机会激活 $v$。传播结束后被激活节点的期望数量就是 $\sigma(S)$。
+
+在常用扩散模型下，$\sigma(S)$ 是单调子模函数。单调性表示加入更多种子不会降低影响范围；子模性表示边际收益递减。该结构使得经典贪心算法虽然不能保证最优，但可以获得 $1-1/e$ 的近似保证。
+
+\section{代表性相关工作}
+
+Kempe, Kleinberg, and Tardos 首次系统研究影响力最大化问题，证明其 NP-hard，并说明独立级联模型和线性阈值模型下的影响函数具有子模性。Nemhauser, Wolsey, and Fisher 的子模最大化理论为贪心算法提供了 $1-1/e$ 的近似保证。Leskovec 等人的 CELF 思想进一步利用子模性加速贪心选择，使该方法更适合大规模网络。
+
+从分布式优化角度看，本项目还关注多智能体协同决策的解释：每个 agent 持有局部图信息，局部估计候选节点收益，再通过通信形成近似全局决策。这种视角与分布式大规模优化、网络系统控制和局部信息下的全局目标优化高度一致。
+
+\section{选题理由}
+
+该选题具有明确的算法价值。第一，它将现代网络传播问题形式化为组合优化问题。第二，它能展示 NP-hard 问题中的近似算法设计。第三，子模性提供了严谨的理论分析入口。第四，分布式扩展能够自然连接多智能体决策和大规模优化方向。相比只讨论传播应用，本项目更强调算法结构：贪心近似、复杂度、可扩展性，以及局部通信条件下的近似性能。
+
+\begin{thebibliography}{9}
+
+\bibitem{kempe2003}
+D. Kempe, J. Kleinberg, and E. Tardos.
+\newblock Maximizing the spread of influence through a social network.
+\newblock \emph{KDD}, 2003.
+
+\bibitem{nemhauser1978}
+G. L. Nemhauser, L. A. Wolsey, and M. L. Fisher.
+\newblock An analysis of approximations for maximizing submodular set functions.
+\newblock \emph{Mathematical Programming}, 1978.
+
+\bibitem{leskovec2007}
+J. Leskovec, A. Krause, C. Guestrin, C. Faloutsos, J. VanBriesen, and N. Glance.
+\newblock Cost-effective outbreak detection in networks.
+\newblock \emph{KDD}, 2007.
+
+\end{thebibliography}
+
+\end{document}

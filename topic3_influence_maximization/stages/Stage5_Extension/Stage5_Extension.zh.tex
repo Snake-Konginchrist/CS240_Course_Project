@@ -1,0 +1,41 @@
+\documentclass[UTF8, 11pt]{ctexart}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{enumitem}
+\setlist{leftmargin=*}
+\setlength{\parskip}{0.35em}
+\setlength{\parindent}{0pt}
+
+\title{\textbf{阶段 5：可选拓展}\\
+通信受限的分布式影响力最大化}
+\author{Team Members: Name 1, Name 2, Name 3}
+\date{CS240: 算法设计与分析，2026 年春季学期}
+
+\begin{document}
+
+\maketitle
+
+\section{拓展方向}
+
+加分拓展计划设计一个通信受限的分布式影响力最大化变体。将图划分给 $q$ 个 agent，每个 agent 只能访问局部子图和边界节点信息。每轮中，agent 先计算本地候选节点的边际收益，再通过有限通信汇总 top candidates，最后选择一个全局种子。
+
+\section{算法思想}
+
+该方法不追求完整替代中心化贪心，而是模拟大规模多智能体网络中的局部计算场景。可调参数包括每个 agent 上报候选数量 $b$、通信轮数 $T$、局部 Monte Carlo 次数 $R_{\text{local}}$。当 $b$ 和 $T$ 增大时，算法应逐渐接近中心化贪心；当通信受限时，算法会出现可测量的近似损失。
+
+\section{评估指标}
+
+拓展实验将报告：
+\begin{itemize}
+    \item 相对于中心化贪心的影响范围比例；
+    \item 通信量与运行时间；
+    \item 不同 agent 数量下的性能变化；
+    \item 局部信息导致的种子选择偏差。
+\end{itemize}
+
+\section{意义}
+
+该拓展把课程中的子模贪心近似算法与分布式优化研究中的局部信息、通信复杂度和全局目标逼近联系起来，能够使项目不只停留在经典影响力最大化复现，而是进一步体现多智能体网络优化的研究味道。
+
+\end{document}

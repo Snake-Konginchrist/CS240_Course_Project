@@ -1,0 +1,59 @@
+\documentclass[UTF8, 11pt]{ctexart}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{enumitem}
+\setlist{leftmargin=*}
+\setlength{\parskip}{0.35em}
+\setlength{\parindent}{0pt}
+
+\title{\textbf{阶段 2：代表性方法选择}\\
+影响力最大化的贪心近似算法与 CELF 加速}
+\author{Team Members: Name 1, Name 2, Name 3}
+\date{CS240: 算法设计与分析，2026 年春季学期}
+
+\begin{document}
+
+\maketitle
+
+\section{正式问题定义}
+
+输入为图 $G=(V,E)$、传播概率 $p_{uv}$、种子预算 $k$ 和扩散模型。输出为种子集合 $S\subseteq V$。目标是最大化
+\[
+    \sigma(S)=\mathbb{E}[\text{从 }S\text{ 出发最终激活的节点数}],
+    \quad |S|\leq k.
+\]
+该问题在独立级联模型和线性阈值模型下均为 NP-hard。
+
+\section{核心算法}
+
+本项目选择经典贪心算法作为代表性方法。算法从空集开始，每轮加入边际收益最大的节点：
+\[
+    v^\star =
+    \arg\max_{v\in V\setminus S}
+    \left(\sigma(S\cup\{v\})-\sigma(S)\right).
+\]
+重复 $k$ 轮后输出 $S$。由于 $\sigma$ 单调且子模，贪心算法达到 $1-1/e$ 近似保证。
+
+实验中还实现 CELF 懒惰贪心。CELF 用最大堆保存候选节点的旧边际收益。由于子模性保证边际收益不会随集合增大而上升，旧收益可以作为上界。只有当堆顶节点的收益不是在当前集合下计算的，算法才重新估计它；若重新估计后仍位于堆顶，则选择该节点。
+
+\section{复杂度分析}
+
+设 $n=|V|$，$m=|E|$，预算为 $k$，Monte Carlo 模拟次数为 $R$。一次独立级联模拟的代价为 $O(n+m)$。朴素贪心每轮对所有候选节点估计边际收益，因此时间复杂度约为
+\[
+    O(k n R (n+m)).
+\]
+CELF 的最坏情况复杂度仍可能接近朴素贪心，但实践中会显著减少边际收益估计次数。度数中心性基线只需排序，复杂度约为 $O(m+n\log n)$。
+
+\section{实验目标}
+
+计划复现以下结果：
+\begin{itemize}
+    \item 贪心算法优于随机选择和度数中心性基线；
+    \item CELF 与朴素贪心获得相同或近似相同的种子质量；
+    \item CELF 的影响力估计次数和运行时间明显更低；
+    \item 随预算 $k$ 增大，影响力呈现边际收益递减；
+    \item 分布式局部信息变体在通信受限时存在可测量的近似损失。
+\end{itemize}
+
+\end{document}

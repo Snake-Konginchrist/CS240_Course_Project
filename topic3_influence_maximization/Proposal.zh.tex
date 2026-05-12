@@ -1,0 +1,89 @@
+\documentclass[UTF8, 11pt]{ctexart}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\setlist{leftmargin=*}
+\setlength{\parskip}{0.35em}
+\setlength{\parindent}{0pt}
+
+\title{\textbf{项目提案}\\
+分布式影响力最大化中的子模优化与贪心近似算法}
+\author{Team Members: Name 1, Name 2, Name 3}
+\date{CS240: 算法设计与分析，2026 年春季学期}
+
+\begin{document}
+
+\maketitle
+
+\section{选题说明}
+
+本项目选择课程参考选题中的 \textbf{Topic 3: 影响力最大化}。影响力最大化研究如何在一个网络中选择有限数量的种子节点，使信息、行为、产品或干预策略能够通过网络传播并覆盖尽可能多的节点。它最初常用于病毒式营销和社交网络分析，但其算法结构也非常适合解释多智能体网络中的协同决策问题。
+
+本项目将主题具体化为：\textbf{分布式影响力最大化中的子模优化与贪心近似算法}。这一选题与分布式及大规模优化、多智能体决策与控制等研究方向有自然联系：网络中的每个智能体或局部计算节点只掌握部分图结构或局部传播信息，需要通过通信协同估计全局影响函数，并在有限预算下选择全局有效的种子集合。
+
+\section{问题形式化}
+
+给定有向或无向图 $G=(V,E)$，其中 $V$ 是节点集合，$E$ 是边集合。每条边 $(u,v)$ 可以带有传播概率 $p_{uv}$。给定预算 $k$，目标是在所有大小不超过 $k$ 的节点集合中选择种子集合 $S\subseteq V$，最大化期望影响范围：
+\[
+    \max_{S\subseteq V,\ |S|\leq k} \sigma(S),
+\]
+其中 $\sigma(S)$ 表示从初始种子集合 $S$ 出发，在独立级联模型或线性阈值模型下最终被激活节点数的期望。
+
+该问题是组合优化问题。经典结果表明，在常用扩散模型下，$\sigma(S)$ 具有单调性和子模性，即加入一个新节点的边际收益会随着已有种子集合变大而下降：
+\[
+    \sigma(A\cup\{v\})-\sigma(A)
+    \geq
+    \sigma(B\cup\{v\})-\sigma(B),
+    \quad A\subseteq B,\ v\notin B.
+\]
+因此，虽然精确求解通常是 NP-hard 的，贪心算法仍可获得 $1-1/e$ 的近似保证。
+
+\section{相关工作}
+
+\textbf{Kempe, Kleinberg, and Tardos.}
+Kempe 等人系统提出了影响力最大化问题，证明该问题在独立级联模型和线性阈值模型下是 NP-hard 的，并利用子模最大化理论说明贪心算法可以达到 $1-1/e$ 的近似比。该工作是本项目最主要的代表性论文。
+
+\textbf{Nemhauser, Wolsey, and Fisher.}
+Nemhauser 等人的经典结果说明，对非负、单调、子模函数进行基数约束最大化时，简单贪心算法可以取得 $1-1/e$ 近似保证。这一理论结果是影响力最大化算法分析的基础。
+
+\textbf{Leskovec et al.}
+Leskovec 等人提出了 CELF 等懒惰贪心加速思想，利用子模函数的边际收益递减性质减少重复计算，从而显著提高大规模网络上的影响力最大化效率。本项目计划把普通贪心和懒惰贪心作为核心复现对象。
+
+\section{算法与技术计划}
+
+项目将实现并比较以下方法：
+\begin{itemize}
+    \item \textbf{随机基线：} 随机选择 $k$ 个种子节点，用作最低基线。
+    \item \textbf{度数中心性基线：} 选择出度或度数最高的 $k$ 个节点，作为简单图启发式方法。
+    \item \textbf{经典贪心算法：} 每轮选择边际影响增益最大的节点。
+    \item \textbf{CELF 懒惰贪心算法：} 利用子模性维护候选节点的上界，减少传播模拟次数。
+    \item \textbf{分布式扩展：} 将图划分给多个 agent，每个 agent 估计局部边际收益，再通过聚合或 consensus 风格通信近似选择全局种子。
+\end{itemize}
+
+扩散模型以独立级联模型为主。影响力估计采用 Monte Carlo 模拟。实验图包括合成随机图、Barabasi--Albert 无标度图、Watts--Strogatz 小世界图，以及一个小型真实网络数据集。
+
+\section{项目范围与预期目标}
+
+本项目的核心目标是复现影响力最大化的经典算法现象：
+\begin{itemize}
+    \item 贪心算法相较随机和度数基线能获得更高影响范围；
+    \item CELF 能在保持接近贪心解质量的同时降低运行时间；
+    \item 种子预算 $k$ 增大时，影响范围增加但边际收益递减；
+    \item 分布式近似方案在通信轮数有限时可能牺牲部分解质量，但能体现多智能体协同优化的思想。
+\end{itemize}
+
+可选拓展包括：比较不同传播概率设置、分析 Monte Carlo 次数对结果稳定性的影响、加入通信受限的分布式选择策略，或讨论该问题与分布式优化中局部信息、全局目标和收敛近似之间的关系。
+
+\section{团队信息}
+
+成员与分工暂定如下：
+\begin{itemize}
+    \item 成员 1：问题建模、相关工作与理论分析。
+    \item 成员 2：贪心算法、CELF 算法与复杂度分析。
+    \item 成员 3：实验实现、可视化与分布式扩展实验。
+\end{itemize}
+
+\end{document}

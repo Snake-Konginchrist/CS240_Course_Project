@@ -1,0 +1,35 @@
+\documentclass[UTF8, 11pt]{ctexart}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{enumitem}
+\setlist{leftmargin=*}
+\setlength{\parskip}{0.35em}
+\setlength{\parindent}{0pt}
+
+\title{\textbf{阶段 3：复现与实现计划}\\
+独立级联模型下的影响力最大化}
+\author{Team Members: Name 1, Name 2, Name 3}
+\date{CS240: 算法设计与分析，2026 年春季学期}
+
+\begin{document}
+
+\maketitle
+
+\section{实现内容}
+
+实现包括五个部分：图生成与读取、独立级联模拟、影响力估计、种子选择算法、实验记录。核心算法包括随机基线、度数中心性基线、朴素贪心、CELF 懒惰贪心和一个分布式局部候选聚合变体。
+
+\section{结果复现}
+
+复现目标不是逐表复现原论文，而是复现代表性算法现象：贪心方法在影响范围上优于简单基线，CELF 在基本保持解质量的同时减少运行时间，且影响函数表现出边际收益递减。
+
+\section{偏差分析}
+
+实验结果可能与论文不同，主要原因包括：数据集规模较小、传播概率设置不同、Monte Carlo 次数有限、随机图结构与真实社交网络不同。报告将记录随机种子、模拟次数和误差区间，以解释结果波动。
+
+\section{性能分析}
+
+性能分析重点关注运行时间、Monte Carlo 调用次数和图规模变化下的可扩展性。对分布式变体，还将记录通信轮数、每个 agent 的本地候选数量，以及相对于中心化贪心的影响范围损失。
+
+\end{document}

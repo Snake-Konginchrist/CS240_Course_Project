@@ -1,0 +1,50 @@
+\documentclass[UTF8, 11pt]{ctexart}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\setlist{leftmargin=*}
+\setlength{\parskip}{0.35em}
+\setlength{\parindent}{0pt}
+
+\title{\textbf{阶段 4：实验评估计划}\\
+影响范围、运行时间与分布式近似损失}
+\author{Team Members: Name 1, Name 2, Name 3}
+\date{CS240: 算法设计与分析，2026 年春季学期}
+
+\begin{document}
+
+\maketitle
+
+\section{运行时间分析}
+
+比较随机基线、度数基线、朴素贪心和 CELF 的运行时间。重点观察 CELF 是否通过减少重复边际收益估计带来加速。每组实验重复运行多次并报告平均值。
+
+\section{可扩展性评估}
+
+在不同规模的 Erdos--Renyi 图、Barabasi--Albert 图和 Watts--Strogatz 图上评估算法表现。规模参数包括节点数 $n$、边数 $m$、预算 $k$ 和 Monte Carlo 次数 $R$。预期朴素贪心随 $n$ 和 $k$ 增长较快，而 CELF 在中等规模图上更可扩展。
+
+\section{对比实验}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+方法 & 预期优点 & 预期缺点 \\
+\midrule
+随机选择 & 极快 & 影响范围低且不稳定 \\
+度数中心性 & 简单、可解释 & 忽略传播重叠 \\
+朴素贪心 & 近似质量高 & 运行时间高 \\
+CELF & 接近贪心质量且更快 & 实现更复杂 \\
+分布式变体 & 符合局部信息场景 & 可能有近似损失 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+主要指标包括平均影响范围、运行时间、影响力估计次数、边际收益曲线和分布式近似损失。
+
+\section{与研究方向的联系}
+
+实验不仅比较中心化算法，还分析局部信息和通信限制对全局目标的影响。这与分布式优化中的基本问题一致：各 agent 持有局部信息，通过有限通信逼近全局最优决策。影响力最大化提供了一个离散、子模、可实验测量的版本。
+
+\end{document}
