@@ -1,0 +1,137 @@
+\documentclass[10pt]{article}
+
+\usepackage[margin=0.72in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+\setlength{\parskip}{0.22em}
+\setlength{\parindent}{0pt}
+
+\title{\textbf{Project Proposal}\\
+Submodular Optimization and Greedy Approximation for Distributed Influence Maximization}
+\author{Team Members: Yixin Chen, Bichi Zhang, Yaoqin Ye}
+\date{CS240: Algorithm Design and Analysis, Spring 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Topic Selection}
+
+We choose \textbf{Topic 3: Influence Maximization} from the course reference
+list. Influence maximization asks how to select a limited number of seed nodes
+in a network so that information, behavior, products, or interventions spread
+to as many nodes as possible. It is a standard model for viral marketing and
+social-network analysis, and it also provides a clean algorithmic connection
+between modern networked applications and classical approximation algorithms.
+
+This project focuses on \textbf{submodular optimization and greedy
+approximation for distributed influence maximization}. In large networks, no
+single machine or agent may know the entire graph. Instead, each local agent
+observes part of the graph or estimates local diffusion effects, then
+communicates with other agents to approximate a globally effective seed set
+under a fixed budget.
+
+\section{Problem Formulation}
+
+Let $G=(V,E)$ be a directed or undirected graph. Each edge $(u,v)$ may have a
+propagation probability $p_{uv}$. Given a budget $k$, the goal is to choose a
+seed set $S\subseteq V$ with $|S|\leq k$ that maximizes the expected number of
+activated nodes:
+\[
+    \max_{S\subseteq V,\ |S|\leq k} \sigma(S),
+\]
+where $\sigma(S)$ is the expected influence spread from $S$ under a diffusion
+model such as the Independent Cascade model or the Linear Threshold model. The
+input is the graph, diffusion parameters, and budget $k$; the output is a seed
+set of size at most $k$.
+
+This is a combinatorial optimization problem. Under common diffusion models,
+$\sigma(S)$ is monotone and submodular, meaning the marginal gain of adding a
+new node decreases as the current seed set grows:
+\[
+    \sigma(A\cup\{v\})-\sigma(A)
+    \geq
+    \sigma(B\cup\{v\})-\sigma(B),
+    \quad A\subseteq B,\ v\notin B.
+\]
+Although exact influence maximization is NP-hard, the standard greedy
+algorithm achieves a $(1-1/e)$ approximation guarantee for monotone submodular
+maximization under a cardinality constraint.
+
+\section{Related Work}
+
+Kempe, Kleinberg, and Tardos introduced the influence maximization problem for
+social networks, proved NP-hardness under the Independent Cascade and Linear
+Threshold models, and showed how submodular maximization yields a
+$(1-1/e)$-approximate greedy algorithm. This will be the main representative
+paper for reproduction.
+
+Nemhauser, Wolsey, and Fisher proved the classical approximation guarantee for
+maximizing a nonnegative monotone submodular function subject to a cardinality
+constraint. Their result provides the theoretical foundation for the greedy
+analysis in influence maximization.
+
+Leskovec et al. proposed the Cost-Effective Lazy Forward (CELF) acceleration,
+which uses diminishing marginal gains to avoid many repeated influence-spread
+computations. We plan to reproduce both standard greedy influence maximization
+and CELF-style lazy greedy selection.
+
+\section{Algorithm and Technical Plan}
+
+We plan to implement and compare the following methods:
+\begin{itemize}
+    \item \textbf{Random baseline:} choose $k$ seed nodes uniformly at random.
+    \item \textbf{Degree baseline:} choose the $k$ nodes with highest degree or
+    out-degree.
+    \item \textbf{Greedy influence maximization:} repeatedly choose the node
+    with the largest estimated marginal influence gain.
+    \item \textbf{CELF lazy greedy:} maintain upper bounds on candidate
+    marginal gains to reduce unnecessary diffusion simulations.
+    \item \textbf{Distributed extension:} partition the graph across multiple
+    agents, let each agent estimate local marginal gains, and aggregate the
+    candidates through limited communication or a consensus-style rule.
+\end{itemize}
+
+The main diffusion model will be the Independent Cascade model, with influence
+spread estimated by Monte Carlo simulation. Planned datasets include synthetic
+Erdos--Renyi graphs, Barabasi--Albert scale-free graphs, Watts--Strogatz
+small-world graphs, and one small real network if time permits. We will measure
+influence spread, runtime, scalability, and sensitivity to the seed budget $k$
+and the number of Monte Carlo trials.
+
+\section{Project Scope and Expected Goals}
+
+The minimum goal is to reproduce the classical behavior of influence
+maximization algorithms:
+\begin{itemize}
+    \item greedy selection should obtain larger influence spread than random
+    and degree-based baselines;
+    \item CELF should preserve nearly the same solution quality as greedy while
+    reducing runtime;
+    \item influence spread should increase with $k$, while marginal gains
+    decrease because of submodularity;
+    \item the distributed approximation should illustrate the tradeoff between
+    communication cost and solution quality.
+\end{itemize}
+
+Optional extensions include comparing different propagation probabilities,
+studying how Monte Carlo sample size affects stability, adding
+communication-limited distributed selection, or connecting the results to
+distributed optimization with local information and global objectives.
+
+\section{Team Information}
+
+\begin{tabular}{@{}lll@{}}
+\toprule
+Member & Responsibility & Expected Contribution \\
+\midrule
+Yixin Chen & Modeling and theory & Problem formulation and related work \\
+Bichi Zhang & Algorithms & Greedy, CELF, and complexity analysis \\
+Yaoqin Ye & Experiments & Implementation, plots, and distributed extension \\
+\bottomrule
+\end{tabular}
+
+\end{document}
