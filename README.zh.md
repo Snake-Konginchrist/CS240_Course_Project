@@ -4,103 +4,146 @@
 
 ## 项目选题
 
-**面向通信高效分布式优化的可扩展图划分算法**
+**通信受限的分布式影响力最大化**
 
-本项目基于 **Topic 2: Community Detection / Graph Partitioning**，并将应用场景
-调整为分布式优化：利用图划分减少跨 worker 通信，同时保持计算负载均衡。
+本项目基于 **Topic 3: Influence Maximization**。项目目标是展示经典的子模优化
+与贪心近似算法如何用于现代网络传播问题，并进一步研究：当中心化贪心选择被
+“局部贪心 + 有限候选通信”的分布式方案替代时，影响范围、运行时间和通信量会如何变化。
 
 ## 已实现方法
 
-- 贪心均衡划分基线
-- 递归谱二分
-- 用于 k 路划分的 Kernighan--Lin 成对细化
-- 用于跨分区通信分析的一致性平均仿真
+- 随机种子 baseline
+- 加权出度 baseline
+- PageRank baseline
+- Independent Cascade 模型下的中心化 Monte Carlo greedy
+- CELF / lazy greedy：利用缓存边际收益上界减少重复 spread evaluation
+- GreeDI-style 分布式 greedy：每个 worker 只发送本地候选集合
 
 ## 项目结构
 
 | 路径 | 说明 |
 | --- | --- |
-| `src/graphs.py` | 图生成与 benchmark 图加载 |
-| `src/algorithms.py` | 贪心、谱划分和 Kernighan--Lin 划分方法 |
-| `src/metrics.py` | 割边权重、归一化割和均衡性指标 |
-| `src/simulation.py` | 一致性平均仿真 |
+| `src/graphs.py` | 合成图和小型真实图生成，并设置 IC 传播概率 |
+| `src/simulation.py` | Independent Cascade 模拟与 Monte Carlo spread 估计 |
+| `src/baselines.py` | random、degree、PageRank 以及固定 seed set 评估 |
+| `src/greedy.py` | 中心化 greedy 和 CELF/lazy greedy |
+| `src/distributed.py` | GreeDI-style 本地候选共享和节点划分 |
+| `src/results.py` | 共享的 `SelectionResult` 和 seed set 类型定义 |
+| `src/algorithms.py` | 兼容导出层，统一 re-export 各类算法 |
+| `src/metrics.py` | quality ratio、通信代理指标和 marginal gain 工具 |
 | `src/experiments.py` | 端到端实验入口 |
 | `src/plotting.py` | 图像生成 |
 | `tests/` | 轻量级单元测试 |
 | `outputs/` | 生成的 CSV 结果和实验图 |
-| `Proposal.tex`, `Proposal.pdf` | 英文项目提案 |
-| `Proposal.zh.tex`, `Proposal.zh.pdf` | 中文项目提案 |
-| `Report.tex`, `Report.pdf` | 英文实验报告 |
-| `Report.zh.tex`, `Report.zh.pdf` | 中文实验报告 |
+| `references/` | 项目参考论文 |
+
+## 想改某部分代码时看哪里
+
+| 想修改的内容 | 对应文件 |
+| --- | --- |
+| IC 传播逻辑或 Monte Carlo spread 估计 | `src/simulation.py` |
+| 图类型或传播概率规则 | `src/graphs.py` |
+| random / degree / PageRank baseline | `src/baselines.py` |
+| 中心化 greedy 选种子逻辑 | `src/greedy.py` |
+| CELF 懒惰贪心的优先队列逻辑 | `src/greedy.py` |
+| 分布式 `m` 个分区和本地候选预算 `q` | `src/distributed.py` |
+| 实验用例、CSV 指标、`m/q` sweep | `src/experiments.py` |
+| 要画哪些图以及图的格式 | `src/plotting.py` |
+| spread/runtime/evaluations 等统一结果字段 | `src/results.py` |
+
+`src/algorithms.py` 保留了旧的统一导入方式，但新的代码建议直接从对应功能模块导入。
 
 ## 环境配置
 
 创建并激活虚拟环境：
 
-```bash
+```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
 安装依赖和本地包：
 
-```bash
+```powershell
 python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
 ## 运行实验
 
-```bash
-python src/experiments.py --output-dir outputs --seed 7
+```powershell
+python src/experiments.py --seed 7 --simulations 40
 ```
 
 该命令会生成：
 
-- `outputs/partition_results.csv`
-- `outputs/figures/cut_weight.png`
-- `outputs/figures/runtime_seconds.png`
-- `outputs/figures/balance_ratio.png`
-- `outputs/figures/consensus_error.png`
+- `outputs/influence_maximization/influence_results.csv`
+- `outputs/influence_maximization/figures/estimated_spread.png`
+- `outputs/influence_maximization/figures/quality_ratio_to_greedy.png`
+- `outputs/influence_maximization/figures/runtime_seconds.png`
+- `outputs/influence_maximization/figures/spread_evaluations.png`
+- `outputs/influence_maximization/figures/transmitted_candidates.png`
 
-## 运行测试
+只有在明确想单独保存某次运行时，才需要使用 `--output-dir SOME_PATH`，例如快速
+smoke test。
 
-```bash
-python -m pytest
-```
+分布式实验中的主要变量是：
 
-## 编译文档
+- `m`：分区数量，当前测试 `2`、`4`、`8`
+- `q`：每个 worker 返回的本地候选预算，当前测试 `k`、`2k`、`5k`
 
-```bash
-pdflatex Proposal.tex
-xelatex Proposal.zh.tex
-pdflatex Report.tex
-xelatex Report.zh.tex
-```
+主要报告指标包括 estimated spread、runtime、spread evaluations、相对于中心化 greedy
+的 distributed quality ratio，以及 transmitted candidate count。
 
-如果 PDF 书签或目录信息需要刷新，可以将对应命令再运行一次。
+CSV 中有两个 spread 字段：
 
-## 结果概览
+- `selection_estimated_spread`：算法选 seed 时内部使用的 spread 估计。
+- `estimated_spread`：用统一 evaluation seed 对最终 seed set 重新评估得到的 spread，
+  用于计算 `quality_ratio_to_greedy`。
 
-当前实验结果显示，Kernighan--Lin 细化方法在平均割边权重和跨分区通信量上表现
-最好。谱划分在结构化的网格图和随机几何图上也有较强表现。
+## 结果图
+
+最新生成的实验图保存在 `outputs/influence_maximization/figures/`。
 
 <table>
   <tr>
-    <td><img src="outputs/figures/cut_weight.png" alt="割边权重比较"></td>
-    <td><img src="outputs/figures/runtime_seconds.png" alt="运行时间比较"></td>
-    <td><img src="outputs/figures/balance_ratio.png" alt="负载均衡比例比较"></td>
+    <td><img src="outputs/influence_maximization/figures/estimated_spread.png" alt="Estimated IC spread"></td>
+    <td><img src="outputs/influence_maximization/figures/quality_ratio_to_greedy.png" alt="Quality ratio to greedy"></td>
   </tr>
   <tr>
-    <td align="center">割边权重</td>
+    <td align="center">Estimated IC spread</td>
+    <td align="center">相对于中心化 greedy 的质量比</td>
+  </tr>
+  <tr>
+    <td><img src="outputs/influence_maximization/figures/runtime_seconds.png" alt="Runtime"></td>
+    <td><img src="outputs/influence_maximization/figures/spread_evaluations.png" alt="Spread evaluations"></td>
+  </tr>
+  <tr>
     <td align="center">运行时间</td>
-    <td align="center">负载均衡比例</td>
+    <td align="center">Spread evaluations</td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="outputs/influence_maximization/figures/transmitted_candidates.png" alt="Transmitted candidates"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">Transmitted candidates</td>
   </tr>
 </table>
 
-## 已知差异
+## 运行测试
 
-原始 Kernighan--Lin 论文主要关注图二分。本项目将成对 Kernighan--Lin 二分作为
-k 路划分的细化步骤，并使用谱划分作为初始划分。一致性仿真保持底层通信图不变，
-只用划分统计跨 worker 消息数，因此划分影响的是通信放置方式，而不是一致性
-动力学本身。
+```powershell
+python -m pytest
+```
+
+如果全局 Python 环境没有安装依赖，使用项目虚拟环境：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+```
+
+## 说明
+
+本实现刻意保持在课程项目可复现范围内，而不是追求 state-of-the-art 系统性能。
+PaC-IM、IMM/RIS、GreediRIS，以及近期 MapReduce/adaptive submodular algorithms
+主要作为 related work 和 optional extension 背景。

@@ -1,41 +1,54 @@
-"""Simple distributed optimization and consensus simulations."""
+"""Independent Cascade simulation utilities."""
 
 from __future__ import annotations
+
+from collections.abc import Iterable
 
 import networkx as nx
 import numpy as np
 
-from metrics import Partition
+
+def independent_cascade(
+    graph: nx.DiGraph, seeds: Iterable[int], rng: np.random.Generator
+) -> set[int]:
+    """Simulate one Independent Cascade diffusion run."""
+    active = set(seeds)
+
+    # Frontier contains nodes that became active in the previous round. Under
+    # IC, only these newly active nodes get one chance to activate neighbors.
+    frontier = list(active)
+
+    while frontier:
+        next_frontier: list[int] = []
+        for node in frontier:
+            for neighbor, edge_data in graph[node].items():
+                if neighbor in active:
+                    continue
+                probability = float(edge_data.get("prob", 0.0))
+
+                # Each directed edge attempts activation independently once.
+                if rng.random() <= probability:
+                    active.add(neighbor)
+                    next_frontier.append(neighbor)
+        frontier = next_frontier
+
+    return active
 
 
-def consensus_averaging(
-    graph: nx.Graph,
-    partition: Partition,
-    steps: int = 80,
+def estimate_spread(
+    graph: nx.DiGraph,
+    seeds: Iterable[int],
+    simulations: int = 200,
     seed: int = 0,
-) -> dict[str, float]:
-    """Run average consensus and report final error plus cross-partition traffic."""
+) -> float:
+    """Estimate expected IC spread by Monte Carlo simulation."""
+    if simulations <= 0:
+        raise ValueError("simulations must be positive.")
     rng = np.random.default_rng(seed)
-    nodes = list(graph.nodes())
-    index = {node: i for i, node in enumerate(nodes)}
-    values = rng.normal(size=len(nodes))
-    target = float(values.mean())
-    degree_max = max(dict(graph.degree()).values())
-    alpha = 1.0 / (degree_max + 1.0)
-    cross_messages = 0
+    seed_list = list(seeds)
+    total = 0
 
-    for _ in range(steps):
-        new_values = values.copy()
-        for u, v in graph.edges():
-            diff = values[index[v]] - values[index[u]]
-            new_values[index[u]] += alpha * diff
-            new_values[index[v]] -= alpha * diff
-            if partition[u] != partition[v]:
-                cross_messages += 2
-        values = new_values
-
-    error = float(np.linalg.norm(values - target) / np.sqrt(len(nodes)))
-    return {
-        "consensus_error": error,
-        "cross_messages": float(cross_messages),
-    }
+    # Average the final active-set size across independent diffusion runs.
+    for _ in range(simulations):
+        total += len(independent_cascade(graph, seed_list, rng))
+    return total / simulations

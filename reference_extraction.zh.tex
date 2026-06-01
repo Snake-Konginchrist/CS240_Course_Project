@@ -1,0 +1,345 @@
+\documentclass[UTF8,10pt]{ctexart}
+
+\usepackage[a4paper,margin=0.72in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xurl}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue]{hyperref}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3pt}
+\setlist[itemize]{leftmargin=*,nosep}
+\setlist[enumerate]{leftmargin=*,nosep}
+\renewcommand{\arraystretch}{1.08}
+
+\title{\textbf{CS240 项目参考文献提取笔记}\\
+通信受限的分布式影响力最大化}
+\author{根据 \texttt{references/} 中 7 篇 PDF 整理}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{项目背景}
+
+本项目研究的是 \textbf{通信受限的分布式影响力最大化}。核心问题是在
+图 $G=(V,E)$ 上选择不超过 $k$ 个种子节点 $S\subseteq V$，使随机传播模型下
+的期望影响范围 $\sigma(S)$ 最大，同时比较中心化贪心、CELF 懒惰贪心，以及
+局部候选集合并的分布式方案。
+
+因此，7 篇参考文献中最有用的内容主要包括：
+\begin{itemize}
+\item 影响力最大化的形式化定义，以及独立级联模型（IC）和线性阈值模型（LT）；
+\item $\sigma(S)$ 的单调子模性，以及贪心算法的 $(1-1/e)$ 近似保证；
+\item 反复估计边际影响力带来的计算瓶颈；
+\item CELF 懒惰求值如何减少重复的传播模拟；
+\item 分布式子模最大化中“局部贪心 + 全局合并”的算法模板；
+\item 近期可扩展系统中关于通信预算、压缩、并行选种子和反向影响力采样的思路。
+\end{itemize}
+
+\section{一页总览}
+
+\begin{longtable}{p{0.21\linewidth}p{0.34\linewidth}p{0.36\linewidth}}
+\toprule
+文献 & 主要思想 & 对本项目的直接用途 \\
+\midrule
+\endfirsthead
+\toprule
+文献 & 主要思想 & 对本项目的直接用途 \\
+\midrule
+\endhead
+Nemhauser 等，1978 & 经典的单调子模函数最大化分析。在基数约束下，
+贪心算法达到 $1-\left(\frac{K-1}{K}\right)^K$，极限为 $1-1/e$。 &
+作为贪心近似保证的理论来源。说明“边际收益递减”为什么能让贪心成为有保证的
+近似算法。 \\
+\midrule
+Kempe 等，2003 & 提出 IC/LT 模型下的影响力最大化；证明 NP-hard；
+证明 $\sigma(S)$ 单调子模；将贪心用于约 $63\%$ 的近似保证。 &
+定义本项目核心问题。可用于写 IC 传播过程、目标函数
+$\max_{|S|\le k}\sigma(S)$、NP-hard、子模性，以及与度数/中心性启发式的比较。 \\
+\midrule
+Leskovec 等，2007 & 将多种 outbreak detection 目标写成子模函数，并提出
+CELF，即基于优先队列的懒惰贪心。 &
+支撑我们的 CELF 实现。旧边际收益在种子集合变大后仍可作为上界，因此只有队首
+候选节点需要按需重算。 \\
+\midrule
+Mirzasoleiman 等，2013 & 提出 GreeDI：划分数据、每个分区局部贪心、合并候选、
+协调器再贪心。 &
+本项目分布式方法的主要模板。每个 worker 返回 $q$ 个本地候选，协调器从并集中
+选最终种子。 \\
+\midrule
+Wang 等，2023 & PaC-IM 结合 sketch 压缩和并行种子选择，用于大规模影响力
+最大化。论文指出空间占用和顺序式 CELF 选种子是瓶颈。 &
+说明为什么要记录运行时间、传播评估次数和可扩展性。我们不复现 PaC-IM，但可将其
+作为大规模系统背景。 \\
+\midrule
+Chen 等，2024 & 研究 MapReduce 和自适应复杂度模型中的基数约束单调子模最大化。 &
+为“分布式子模最大化”提供近期理论背景。可说明我们的简化 GreeDI 实验是当前研究
+方向的课程规模版本。 \\
+\midrule
+Barik 等，2025 & GreediRIS 将反向影响力采样、分布式流式最大覆盖和通信削减结合。 &
+最贴近“通信受限”主题。可用于解释候选通信量 $mq$，以及质量和通信之间的权衡。 \\
+\bottomrule
+\end{longtable}
+
+\section{可复用的核心定义与结论}
+
+\subsection{影响力最大化}
+
+给定图 $G=(V,E)$、边传播概率、扩散模型 $M$ 和种子预算 $k$，影响力最大化
+可以写作
+\[
+    \max_{S\subseteq V,\ |S|\le k} \sigma(S),
+\]
+其中 $\sigma(S)$ 表示初始激活 $S$ 后最终被激活节点数的期望。
+
+本项目主要使用 \textbf{独立级联模型（IC）}。当节点 $u$ 第一次被激活时，
+它对每个尚未激活的出邻居 $v$ 有一次独立尝试，成功概率为 $p_{uv}$。当没有
+新的激活发生时，传播停止。实际实现中，可以用 $R$ 次 Monte Carlo 模拟的平均
+最终激活节点数来估计 $\sigma(S)$。
+
+\subsection{子模性}
+
+集合函数 $f:2^V\rightarrow \mathbb{R}$ 是子模的，如果对任意
+$A\subseteq B\subseteq V$ 和 $v\notin B$，
+\[
+    f(A\cup\{v\})-f(A)\ge f(B\cup\{v\})-f(B).
+\]
+这就是“边际收益递减”。在 IC 和 LT 模型下，影响范围函数 $\sigma(S)$ 是单调
+且子模的。因此可以使用如下贪心选点规则：
+\[
+    v^\star=\arg\max_{v\in V\setminus S}
+    \left(\sigma(S\cup\{v\})-\sigma(S)\right).
+\]
+
+\subsection{贪心近似保证}
+
+Nemhauser、Wolsey 和 Fisher 证明：对于非负、单调、子模函数，在基数约束
+下，贪心算法得到的集合 $S$ 满足
+\[
+    f(S)\ge (1-1/e) f(S^\star),
+\]
+有限 $k$ 时也可写成 $1-\left(\frac{k-1}{k}\right)^k$ 的形式。Kempe 等
+证明影响力函数满足单调子模性后，将该定理应用到影响力最大化。这是报告中最重要
+的理论桥梁：现代网络传播问题可以转化为经典子模最大化问题。
+
+\section{逐篇论文提取}
+
+\subsection{Nemhauser, Wolsey, and Fisher (1978)}
+
+\textbf{对项目有用的内容。}
+\begin{itemize}
+\item 论文研究带基数约束的子模集合函数最大化，正好是影响力最大化背后的抽象优化形式。
+\item 子模性可理解为离散版凹性：被选集合越大，新元素带来的边际收益越小。
+\item 对满足 $z(\emptyset)=0$ 的非减函数，贪心具有接近 $(e-1)/e=1-1/e$ 的最坏情况保证。
+\end{itemize}
+
+\textbf{怎么写进报告。} 在理论部分先说明影响力最大化属于“单调子模函数 + 基数约束”的
+组合优化问题，再引用该文献给出通用贪心保证，随后引用 Kempe 等说明影响力函数确实满足子模性。
+
+\subsection{Kempe, Kleinberg, and Tardos (2003)}
+
+\textbf{对项目有用的内容。}
+\begin{itemize}
+\item 论文将病毒式营销中的种子选择问题形式化为影响力最大化：选择 $k$ 个初始采纳者，
+最大化最终期望采纳人数。
+\item 论文定义了 IC 和 LT 两个经典扩散模型。本项目应以 IC 作为主要实现对象，因为它容易模拟，
+也与 proposal 中的设定一致。
+\item IC 和 LT 下的影响力最大化是 NP-hard，因此课程项目中不应追求精确最优。
+\item 在 IC 和 LT 下，期望影响范围 $\sigma(S)$ 是单调子模函数。因此，当影响力估计足够准确时，
+贪心可以得到接近 $(1-1/e)$ 的近似保证。
+\item 论文实验比较了贪心与度数、中心性启发式，说明启发式可能把预算浪费在重叠邻域上。
+这支持我们设置 random、degree、PageRank/centrality 等 baseline。
+\end{itemize}
+
+\textbf{实现启示。} 使用 Monte Carlo IC 模拟估计 $\widehat{\sigma}(S)$。朴素贪心的
+成本很高，因为每一轮都要对许多候选节点重新估计边际收益。这正是引入 CELF 和分布式候选
+过滤的理由。
+
+\subsection{Leskovec 等 (2007)}
+
+\textbf{对项目有用的内容。}
+\begin{itemize}
+\item 论文研究 outbreak detection，但优化结构与影响力最大化一致：在有限预算下选择节点，
+最大化具有边际收益递减性质的收益函数。
+\item 论文提出 CELF，即使用优先队列缓存边际收益的懒惰贪心方法。
+\item 关键观察是：根据子模性，旧的边际收益在种子集合扩大后仍然是当前边际收益的上界。
+只有当一个节点排到队首时，才需要重新计算它的真实边际收益。
+\item CELF 保留了贪心选择规则，但通常能显著减少昂贵的目标函数评估次数。
+\end{itemize}
+
+\textbf{实现启示。} 维护条目 $(v,\widehat{\Delta}_v,t_v)$，其中 $t_v$ 表示
+$\widehat{\Delta}_v$ 是在种子集合多大时计算的。每次弹出缓存收益最大的节点；如果它
+已经是当前轮的真实收益，就选它；否则重新计算并放回队列。实验中应同时报告运行时间和
+传播评估次数。
+
+\subsection{Mirzasoleiman 等 (2013)}
+
+\textbf{对项目有用的内容。}
+\begin{itemize}
+\item 论文提出 GreeDI，用于分布式单调子模最大化。
+\item 算法将 ground set 分到不同机器，每台机器局部运行贪心，把本地选出的元素发送给协调器，
+协调器再在候选并集上运行贪心。
+\item 主要优点是通信量小：worker 不需要发送完整数据，只发送很小的候选集合。
+\item 论文也解释了分布式贪心与中心化贪心的差异：分区可能选出冗余候选，也可能漏掉全局价值高、
+但局部不显眼的节点。
+\end{itemize}
+
+\textbf{本项目中的改写。}
+\[
+    V=V_1\cup\cdots\cup V_m,\qquad
+    C_i=\text{LocalGreedy}(G_i,q),\qquad
+    C=\bigcup_{i=1}^{m}C_i,
+\]
+随后协调器输出
+\[
+    S_{\mathrm{dist}}=\text{Greedy}(G,C,k).
+\]
+实验中改变 $m$ 和 $q$，并报告
+\[
+    \rho=\frac{\sigma(S_{\mathrm{dist}})}{\sigma(S_{\mathrm{cent}})}
+\]
+以及通信代理指标 $mq$。
+
+\subsection{Wang, Ding, Gu, and Sun (2023)}
+
+\textbf{对项目有用的内容。}
+\begin{itemize}
+\item 论文指出大规模影响力最大化有两个主要瓶颈：用于边际收益估计的 sketch 占用空间大，
+以及种子选择过程顺序性强。
+\item PaC-IM 将 sketch 压缩和并行种子选择结合。它超出我们的复现范围，但能很好地说明
+为什么需要关注运行时间、空间和可扩展性。
+\item 论文区分了 Monte Carlo 模拟和 sketch 方法：sketch 复用采样图，通常比每次评估都重新
+做独立模拟更高效。
+\item 论文指出 CELF 式懒惰求值减少评估次数，但其顺序性可能限制并行化，这正好引出分布式
+或并行改进。
+\end{itemize}
+
+\textbf{怎么写进报告。} 在相关工作中引用该文献，说明可扩展影响力最大化仍是活跃的系统问题。
+在项目范围中明确：我们实现 Monte Carlo greedy、CELF 和简单分布式 greedy，而 PaC-IM 作为高级背景。
+
+\subsection{Chen, Dey, and Kuhnle (2024)}
+
+\textbf{对项目有用的内容。}
+\begin{itemize}
+\item 论文研究 MapReduce 和自适应复杂度模型中的基数约束单调子模最大化。
+\item 它将标准贪心描述为质量好但难扩展的算法，因为它需要中心化访问数据，并且包含许多自适应轮次。
+\item 论文把分布式算法与低自适应复杂度的并行算法联系起来。这个角度有助于说明分布式影响力最大化
+不仅是图划分问题，也是减少顺序依赖的问题。
+\item 论文提供了在减少通信或自适应轮数的同时保持近似保证的现代背景。
+\end{itemize}
+
+\textbf{怎么写进报告。} 用该文献加强“分布式子模最大化”的背景段落。它不一定直接指导实现，
+但能帮助说明我们的简化 GreeDI 实验属于更广泛的研究方向。
+
+\subsection{Barik 等 (2025)}
+
+\textbf{对项目有用的内容。}
+\begin{itemize}
+\item GreediRIS 面向分布式影响力最大化，并使用反向影响力采样（RIS）。
+\item RIS 将选种子问题转化为随机反向可达集合上的 maximum-$k$-coverage 问题。
+如果一个节点覆盖很多反向可达集合，它就是好的种子候选。
+\item 论文重点处理分布式 RIS 系统中的种子选择瓶颈，并采用分布式流式 max-cover。
+\item 论文明确讨论通信瓶颈，并把截断作为一个可调旋钮，用较低通信量换取一定质量损失。
+\end{itemize}
+
+\textbf{怎么写进报告。} 这是最能支撑“通信受限”角度的近期文献。定义本地候选预算 $q$ 时，
+可以引用它说明：增加 $q$ 通常提升解质量，但也会增加通信成本。
+
+\section{建议写入报告的位置}
+
+\subsection{阶段 1：背景与相关工作}
+
+用 Kempe 等介绍应用背景和扩散模型；用 Nemhauser 等介绍子模最大化；用 Leskovec 等
+介绍懒惰求值；用 Mirzasoleiman 等、Chen 等、Wang 等和 Barik 等引出分布式与可扩展算法。
+
+\subsection{阶段 2：代表性方法}
+
+代表性方法建议写成 \textbf{基于 IC Monte Carlo 估计的中心化贪心}，并把
+\textbf{CELF} 作为主要加速版本。分布式扩展建议采用 GreeDI 风格方法，而不是完整 RIS 系统，
+因为它更容易实现，也更贴合 proposal。
+
+\subsection{阶段 3--4：实现与实验}
+
+建议实现的算法：
+\begin{itemize}
+\item random baseline；
+\item degree baseline；
+\item PageRank 或 centrality baseline；
+\item Monte Carlo greedy；
+\item CELF/lazy greedy；
+\item 局部 greedy 加协调器 greedy 的分布式方法。
+\end{itemize}
+
+建议报告的指标：
+\begin{itemize}
+\item 估计影响范围 $\widehat{\sigma}(S)$；
+\item 运行时间；
+\item 传播评估次数；
+\item 分布式质量比 $\rho$；
+\item 通信代理指标 $mq$；
+\item 对 $m$、$q$、$k$ 和传播概率的敏感性。
+\end{itemize}
+
+\section{可直接改写进最终报告的段落}
+
+\textbf{问题动机。} 影响力最大化将病毒式营销、信息扩散和干预规划建模为图上的基数约束
+组合优化问题。少量种子节点可能触发大规模级联，但如果只按局部中心性选点，可能会把预算浪费在
+高度重叠的邻域中。
+
+\textbf{理论桥梁。} 在 IC 模型下，期望传播范围函数是单调子模的。因此，随着当前种子集合
+变大，新种子的边际贡献会递减。这个性质把影响力最大化连接到 Nemhauser-Wolsey-Fisher
+经典定理，从而为贪心算法提供 $(1-1/e)$ 近似保证。
+
+\textbf{为什么使用 CELF。} 贪心影响力最大化的主要成本来自反复估计传播范围。CELF 利用
+子模性，将缓存的旧边际收益作为上界，只有当某个节点仍可能是最优候选时才重新计算它。因此，
+CELF 保留了贪心选择规则，同时减少了目标函数评估次数。
+
+\textbf{为什么做分布式 greedy。} 中心化贪心假设算法能访问完整图和完整候选集合。在分布式
+设置中，每个 worker 可以只选择本地候选并发送给协调器。这会降低通信量，但如果跨分区影响或
+全局重要节点没有进入候选池，最终解质量可能下降。
+
+\begin{thebibliography}{9}
+\bibitem{nemhauser1978}
+G. L. Nemhauser, L. A. Wolsey, and M. L. Fisher.
+An analysis of approximations for maximizing submodular set functions - I.
+\emph{Mathematical Programming}, 14:265--294, 1978.
+
+\bibitem{kempe2003}
+D. Kempe, J. Kleinberg, and E. Tardos.
+Maximizing the spread of influence through a social network.
+\emph{KDD}, 2003.
+
+\bibitem{leskovec2007}
+J. Leskovec, A. Krause, C. Guestrin, C. Faloutsos, J. VanBriesen, and N. Glance.
+Cost-effective outbreak detection in networks.
+\emph{KDD}, 2007.
+
+\bibitem{mirzasoleiman2013}
+B. Mirzasoleiman, A. Karbasi, R. Sarkar, and A. Krause.
+Distributed submodular maximization: identifying representative elements in
+massive data.
+\emph{NeurIPS}, 2013.
+
+\bibitem{wang2023}
+L. Wang, X. Ding, Y. Gu, and Y. Sun.
+Fast and space-efficient parallel algorithms for influence maximization.
+\emph{PVLDB}, 17(3):400--413, 2023.
+
+\bibitem{chen2024}
+Y. Chen, T. Dey, and A. Kuhnle.
+Scalable distributed algorithms for size-constrained submodular maximization in
+the MapReduce and adaptive complexity models.
+\emph{Journal of Artificial Intelligence Research}, 80:1575--1622, 2024.
+
+\bibitem{barik2025}
+R. Barik, W. Cappa, S. M. Ferdous, M. Minutoli, M. Halappanavar, and
+A. Kalyanaraman.
+GreediRIS: Scalable influence maximization using distributed streaming maximum
+cover.
+\emph{Journal of Parallel and Distributed Computing}, 198:105037, 2025.
+\end{thebibliography}
+
+\end{document}

@@ -5,110 +5,153 @@ Design and Analysis, Spring 2026**.
 
 ## Project Topic
 
-**Scalable Graph Partitioning for Communication-Efficient Distributed
-Optimization**
+**Communication-Constrained Distributed Influence Maximization**
 
-The project is based on **Topic 2: Community Detection / Graph Partitioning**.
-The application is adapted to distributed optimization: graph partitions are
-used to reduce cross-worker communication while keeping computational load
-balanced.
+The project is based on **Topic 3: Influence Maximization**. It studies how
+classical greedy approximation algorithms for monotone submodular maximization
+can be used for modern network diffusion problems, and how solution quality
+changes when centralized greedy selection is replaced by local greedy selection
+plus limited candidate communication.
 
 ## Implemented Methods
 
-- Greedy balanced partitioning baseline
-- Recursive spectral bisection
-- Kernighan--Lin pairwise refinement for k-way partitioning
-- Consensus averaging simulation for cross-partition communication analysis
+- Random seed baseline
+- Weighted out-degree baseline
+- PageRank baseline
+- Centralized Monte Carlo greedy under the Independent Cascade model
+- CELF / lazy greedy with cached marginal-gain upper bounds
+- GreeDI-style distributed greedy with local candidate budget `q`
 
 ## Project Structure
 
 | Path | Description |
 | --- | --- |
-| `src/graphs.py` | Graph generation and benchmark graph loading |
-| `src/algorithms.py` | Greedy, spectral, and Kernighan--Lin partitioning |
-| `src/metrics.py` | Cut weight, normalized cut, and balance metrics |
-| `src/simulation.py` | Consensus averaging simulation |
+| `src/graphs.py` | Synthetic and small real-world graph generation with IC probabilities |
+| `src/simulation.py` | Independent Cascade simulation and Monte Carlo spread estimation |
+| `src/baselines.py` | Random, degree, PageRank, and fixed-seed-set evaluation baselines |
+| `src/greedy.py` | Centralized Monte Carlo greedy and CELF/lazy greedy |
+| `src/distributed.py` | GreeDI-style local candidate sharing and node partitioning |
+| `src/results.py` | Shared `SelectionResult` and seed-set type definitions |
+| `src/algorithms.py` | Compatibility export layer that re-exports all algorithms |
+| `src/metrics.py` | Quality ratio, communication proxy, and marginal-gain helpers |
 | `src/experiments.py` | End-to-end experiment runner |
 | `src/plotting.py` | Figure generation |
 | `tests/` | Lightweight unit tests |
 | `outputs/` | Generated CSV results and figures |
-| `Proposal.tex`, `Proposal.pdf` | English project proposal |
-| `Proposal.zh.tex`, `Proposal.zh.pdf` | Chinese project proposal |
-| `Report.tex`, `Report.pdf` | English experimental report |
-| `Report.zh.tex`, `Report.zh.pdf` | Chinese experimental report |
+| `references/` | Project reference papers |
+
+## Where to Find the Code You Want
+
+| If you want to change... | Open this file |
+| --- | --- |
+| IC diffusion logic or Monte Carlo spread estimation | `src/simulation.py` |
+| graph types or propagation probability rules | `src/graphs.py` |
+| random / degree / PageRank baselines | `src/baselines.py` |
+| centralized greedy seed selection | `src/greedy.py` |
+| CELF lazy-greedy priority-queue logic | `src/greedy.py` |
+| distributed `m` partitions and local candidate budget `q` | `src/distributed.py` |
+| experiment cases, metrics written to CSV, or `m/q` sweeps | `src/experiments.py` |
+| plot list and figure formatting | `src/plotting.py` |
+| shared output fields such as spread/runtime/evaluations | `src/results.py` |
+
+The old all-in-one import style still works through `src/algorithms.py`, but
+new code should preferably import from the focused module it uses.
 
 ## Setup
 
 Create and activate the virtual environment:
 
-```bash
+```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
 Install dependencies and the local package:
 
-```bash
+```powershell
 python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
 ## Run Experiments
 
-```bash
-python src/experiments.py --output-dir outputs --seed 7
+```powershell
+python src/experiments.py --seed 7 --simulations 40
 ```
 
 This writes:
 
-- `outputs/partition_results.csv`
-- `outputs/figures/cut_weight.png`
-- `outputs/figures/runtime_seconds.png`
-- `outputs/figures/balance_ratio.png`
-- `outputs/figures/consensus_error.png`
+- `outputs/influence_maximization/influence_results.csv`
+- `outputs/influence_maximization/figures/estimated_spread.png`
+- `outputs/influence_maximization/figures/quality_ratio_to_greedy.png`
+- `outputs/influence_maximization/figures/runtime_seconds.png`
+- `outputs/influence_maximization/figures/spread_evaluations.png`
+- `outputs/influence_maximization/figures/transmitted_candidates.png`
 
-## Run Tests
+Use `--output-dir SOME_PATH` only when you intentionally want a separate run
+directory, for example for a quick smoke test.
 
-```bash
-python -m pytest
-```
+The main distributed variables are:
 
-## Build Documents
+- `m`: number of partitions, tested as `2`, `4`, and `8`
+- `q`: local candidate budget, tested as `k`, `2k`, and `5k`
 
-```bash
-pdflatex Proposal.tex
-xelatex Proposal.zh.tex
-pdflatex Report.tex
-xelatex Report.zh.tex
-```
+The main reported metrics are expected spread, runtime, number of spread
+evaluations, distributed quality ratio relative to centralized greedy, and
+transmitted candidate count.
 
-Run each command twice if PDF outlines need to be refreshed.
+The CSV contains both:
 
-## Results Snapshot
+- `selection_estimated_spread`: the spread estimate used internally while an
+  algorithm selected seeds.
+- `estimated_spread`: a fair re-evaluation of the final seed set using a common
+  evaluation seed, used for `quality_ratio_to_greedy`.
 
-The current run shows that Kernighan--Lin refinement achieves the lowest
-average cut weight and cross-partition communication among the implemented
-methods. Spectral partitioning is also strong on structured grid and geometric
-graphs.
+## Result Figures
+
+The latest generated figures are stored under
+`outputs/influence_maximization/figures/`.
 
 <table>
   <tr>
-    <td><img src="outputs/figures/cut_weight.png" alt="Cut weight comparison"></td>
-    <td><img src="outputs/figures/runtime_seconds.png" alt="Runtime comparison"></td>
-    <td><img src="outputs/figures/balance_ratio.png" alt="Balance ratio comparison"></td>
+    <td><img src="outputs/influence_maximization/figures/estimated_spread.png" alt="Estimated IC spread"></td>
+    <td><img src="outputs/influence_maximization/figures/quality_ratio_to_greedy.png" alt="Quality ratio to greedy"></td>
   </tr>
   <tr>
-    <td align="center">Cut weight</td>
+    <td align="center">Estimated IC spread</td>
+    <td align="center">Quality ratio to centralized greedy</td>
+  </tr>
+  <tr>
+    <td><img src="outputs/influence_maximization/figures/runtime_seconds.png" alt="Runtime"></td>
+    <td><img src="outputs/influence_maximization/figures/spread_evaluations.png" alt="Spread evaluations"></td>
+  </tr>
+  <tr>
     <td align="center">Runtime</td>
-    <td align="center">Balance ratio</td>
+    <td align="center">Spread evaluations</td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="outputs/influence_maximization/figures/transmitted_candidates.png" alt="Transmitted candidates"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">Transmitted candidates</td>
   </tr>
 </table>
 
-## Known Deviations
+## Run Tests
 
-The original Kernighan--Lin paper focuses on graph bisection. This project uses
-pairwise Kernighan--Lin bisection as a refinement step for k-way partitioning,
-initialized by spectral partitioning. The consensus simulation keeps the
-underlying graph fixed and uses partitions to measure cross-worker traffic, so
-partitioning affects communication placement rather than the consensus dynamics
-itself.
+```powershell
+python -m pytest
+```
+
+If the global Python environment does not have the dependencies installed, use:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+```
+
+## Notes
+
+The implementation intentionally focuses on a course-scale reproduction rather
+than state-of-the-art systems. PaC-IM, IMM/RIS, GreediRIS, and recent
+MapReduce/adaptive submodular algorithms are treated as related work and
+possible optional extensions.

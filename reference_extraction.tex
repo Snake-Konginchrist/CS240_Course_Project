@@ -1,0 +1,418 @@
+\documentclass[10pt]{article}
+
+\usepackage[a4paper,margin=0.72in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{times}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xurl}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue]{hyperref}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3pt}
+\setlist[itemize]{leftmargin=*,nosep}
+\setlist[enumerate]{leftmargin=*,nosep}
+\renewcommand{\arraystretch}{1.08}
+
+\title{\textbf{Extracted Reference Notes for the CS240 Project}\\
+Communication-Constrained Distributed Influence Maximization}
+\author{Prepared from the seven PDFs in \texttt{references/}}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Project Context}
+
+The course project studies \textbf{communication-constrained distributed influence
+maximization}.  The target problem is to choose a seed set
+$S\subseteq V$, $|S|\le k$, that maximizes expected influence spread
+$\sigma(S)$ under a stochastic diffusion model, while comparing centralized
+greedy, lazy greedy/CELF, and a simple distributed candidate-sharing scheme.
+The most useful material from the references is therefore:
+\begin{itemize}
+\item the formal influence maximization model and the Independent Cascade (IC)
+and Linear Threshold (LT) diffusion processes;
+\item the monotone submodular structure of $\sigma(S)$ and the
+$(1-1/e)$ greedy approximation guarantee;
+\item the computational bottleneck of repeated marginal-gain estimation;
+\item lazy evaluation as a way to reduce repeated spread evaluations;
+\item distributed submodular maximization as the theoretical template for
+``local greedy plus global merge'';
+\item modern scalable systems that motivate communication budgets, compression,
+parallel seed selection, and reverse influence sampling.
+\end{itemize}
+
+\section{One-Page Synthesis}
+
+\begin{longtable}{p{0.21\linewidth}p{0.34\linewidth}p{0.36\linewidth}}
+\toprule
+Reference & Main idea & Direct use in our project \\
+\midrule
+\endfirsthead
+\toprule
+Reference & Main idea & Direct use in our project \\
+\midrule
+\endhead
+Nemhauser et al. 1978 & Classical analysis of maximizing a nondecreasing
+submodular set function under a cardinality constraint. Greedy achieves
+$1-\left(\frac{K-1}{K}\right)^K$, approaching $1-1/e$. &
+Provides the theorem behind our greedy guarantee. We can cite it when explaining
+why diminishing returns make greedy a principled approximation algorithm. \\
+\midrule
+Kempe et al. 2003 & Introduces influence maximization under IC/LT models;
+proves NP-hardness; proves $\sigma(S)$ is monotone submodular; applies greedy
+for a near $63\%$ guarantee. &
+Defines our core problem. Provides IC process, objective $\max_{|S|\le k}\sigma(S)$,
+NP-hardness, submodularity, and the comparison against degree/centrality
+heuristics. \\
+\midrule
+Leskovec et al. 2007 & Shows many outbreak-detection objectives are submodular
+and develops CELF, a cost-effective lazy forward greedy algorithm. &
+Supports our lazy greedy implementation. Its priority-queue logic explains why
+old marginal gains can serve as upper bounds after the seed set grows. \\
+\midrule
+Mirzasoleiman et al. 2013 & Proposes GreeDI, a two-stage distributed protocol:
+partition data, run local greedy, merge candidates, run greedy again. &
+Main template for our distributed method. We can adapt it to graph partitions:
+each worker returns $q$ local candidates, and a coordinator selects final seeds. \\
+\midrule
+Wang et al. 2023 & PaC-IM combines sketch compression and parallel seed
+selection for large-scale influence maximization. It identifies space use and
+sequential CELF-style seed selection as bottlenecks. &
+Motivates why our course implementation focuses on runtime, spread-evaluation
+count, and scalability. We do not need to reproduce PaC-IM, but can cite it as
+evidence that parallel seed selection remains important. \\
+\midrule
+Chen et al. 2024 & Studies scalable distributed algorithms for size-constrained
+monotone submodular maximization in MapReduce and adaptive-complexity models. &
+Gives modern theoretical context for distributed submodular maximization. Useful
+for framing our simplified GreeDI-style approach as a course-scale version of
+current research. \\
+\midrule
+Barik et al. 2025 & GreediRIS combines reverse influence sampling with
+distributed streaming maximum coverage and communication reduction techniques. &
+Most relevant recent paper for communication constraints. It motivates reporting
+candidate communication volume $mq$ and explaining the tradeoff between quality
+and communication. \\
+\bottomrule
+\end{longtable}
+
+\section{Core Definitions and Results to Reuse}
+
+\subsection{Influence Maximization}
+
+Given a graph $G=(V,E)$, edge propagation probabilities, a diffusion model $M$,
+and a seed budget $k$, influence maximization asks for
+\[
+    \max_{S\subseteq V,\ |S|\le k} \sigma(S),
+\]
+where $\sigma(S)$ is the expected number of activated vertices when the seed set
+$S$ is initially active.
+
+For our project, the \textbf{Independent Cascade model} is the main diffusion
+model.  When a node $u$ first becomes active, it gets one independent chance to
+activate each currently inactive out-neighbor $v$ with probability $p_{uv}$.
+The process stops when no further activation occurs.  A Monte Carlo estimator
+can approximate $\sigma(S)$ by averaging the final active-set size over $R$
+simulation runs.
+
+\subsection{Submodularity}
+
+A set function $f:2^V\rightarrow \mathbb{R}$ is submodular if for any
+$A\subseteq B\subseteq V$ and $v\notin B$,
+\[
+    f(A\cup\{v\})-f(A)\ge f(B\cup\{v\})-f(B).
+\]
+This is the diminishing-returns property. For influence maximization under IC
+and LT, $\sigma(S)$ is monotone and submodular. This directly justifies
+greedy seed selection:
+\[
+    v^\star=\arg\max_{v\in V\setminus S}
+    \left(\sigma(S\cup\{v\})-\sigma(S)\right).
+\]
+
+\subsection{Greedy Approximation Guarantee}
+
+Nemhauser, Wolsey, and Fisher prove that for a nonnegative, monotone submodular
+function under a cardinality constraint, the greedy algorithm returns a set $S$
+with
+\[
+    f(S)\ge (1-1/e) f(S^\star),
+\]
+up to the finite-$k$ form $1-\left(\frac{k-1}{k}\right)^k$. Kempe et al. apply
+this theorem to influence maximization after proving that the influence spread
+function is monotone submodular. This is the main theory bridge in our report:
+modern network diffusion becomes a classical submodular maximization problem.
+
+\section{Paper-by-Paper Extraction}
+
+\subsection{Nemhauser, Wolsey, and Fisher (1978)}
+
+\textbf{Helpful content.}
+\begin{itemize}
+\item The paper studies maximizing a submodular set function with a cardinality
+constraint, exactly the abstract optimization form behind influence maximization.
+\item It treats submodularity as a discrete analogue of concavity: marginal
+benefit decreases as the selected set grows.
+\item For nondecreasing $z(S)$ with $z(\emptyset)=0$, greedy obtains a worst-case
+ratio approaching $(e-1)/e=1-1/e$.
+\end{itemize}
+
+\textbf{How to use it.} In the theory section, state that the influence objective
+is an instance of monotone submodular maximization under a cardinality
+constraint. Then cite Nemhauser et al. for the generic greedy guarantee before
+citing Kempe et al. for the influence-specific proof of submodularity.
+
+\subsection{Kempe, Kleinberg, and Tardos (2003)}
+
+\textbf{Helpful content.}
+\begin{itemize}
+\item The paper formulates the viral-marketing seed-selection problem as
+influence maximization: choose $k$ initial adopters to maximize expected final
+adoption.
+\item It defines two classical diffusion models, IC and LT. Our project should
+use IC as the primary implementation target because it is easy to simulate and
+matches the proposal.
+\item Influence maximization is NP-hard under IC and LT, so exact optimization
+is not expected in a course implementation.
+\item The expected influence spread $\sigma(S)$ is monotone and submodular under
+IC and LT. Therefore greedy has a $(1-1/e-\epsilon)$-style approximation when
+spread values are estimated sufficiently accurately.
+\item Experiments compare greedy against degree and centrality heuristics and
+show that heuristics can waste seeds on overlapping neighborhoods. This supports
+our baselines: random, degree, and PageRank/centrality.
+\end{itemize}
+
+\textbf{Implementation takeaway.} Use Monte Carlo IC simulation for
+$\widehat{\sigma}(S)$. The naive greedy cost is high because for each of $k$
+rounds, many candidate nodes need marginal-gain estimates. This motivates CELF
+and distributed candidate filtering.
+
+\subsection{Leskovec et al. (2007)}
+
+\textbf{Helpful content.}
+\begin{itemize}
+\item The paper studies outbreak detection but uses the same submodular
+optimization structure: select a limited set of nodes to maximize a reward
+function with diminishing returns.
+\item It introduces CELF, a lazy greedy method using a priority queue of cached
+marginal gains.
+\item The key observation is that, by submodularity, a previously computed
+marginal gain is an upper bound after the selected set grows. A node only needs
+reevaluation when it reaches the top of the queue.
+\item CELF preserves the greedy choice rule but can dramatically reduce the
+number of expensive objective evaluations.
+\end{itemize}
+
+\textbf{Implementation takeaway.} Maintain entries $(v,\widehat{\Delta}_v,t_v)$,
+where $t_v$ records the seed-set size when $\widehat{\Delta}_v$ was last
+computed. Pop the largest cached gain. If it is current, select it; otherwise
+recompute its marginal gain under the current seed set and push it back.
+Report both runtime and the number of spread evaluations to show the benefit of
+lazy evaluation.
+
+\subsection{Mirzasoleiman et al. (2013)}
+
+\textbf{Helpful content.}
+\begin{itemize}
+\item The paper proposes GreeDI, a simple distributed protocol for monotone
+submodular maximization.
+\item The protocol partitions the ground set across machines, runs greedy
+locally, sends local selected elements to a coordinator, and runs greedy again
+on the union of local candidates.
+\item The main advantage is low communication: instead of sending the whole
+dataset, each worker sends only a small candidate set.
+\item The paper explains why distributed greedy is attractive but not identical
+to centralized greedy: partitions may select redundant candidates or miss nodes
+whose value is mainly global.
+\end{itemize}
+
+\textbf{Adaptation to our project.}
+\[
+    V=V_1\cup\cdots\cup V_m,\qquad
+    C_i=\text{LocalGreedy}(G_i,q),\qquad
+    C=\bigcup_{i=1}^{m}C_i,
+\]
+then the coordinator returns
+\[
+    S_{\mathrm{dist}}=\text{Greedy}(G,C,k).
+\]
+Our experiments should vary $m$ and $q$, then report
+\[
+    \rho=\frac{\sigma(S_{\mathrm{dist}})}{\sigma(S_{\mathrm{cent}})}
+\]
+and the communication proxy $mq$.
+
+\subsection{Wang, Ding, Gu, and Sun (2023)}
+
+\textbf{Helpful content.}
+\begin{itemize}
+\item The paper identifies two bottlenecks in large-scale influence
+maximization: space-heavy sketches for marginal-gain estimation and sequential
+seed selection.
+\item PaC-IM combines sketch compression with parallel seed-selection data
+structures. It is far beyond the scope of our reproduction, but it gives strong
+motivation for measuring runtime and memory/scalability.
+\item The paper distinguishes Monte Carlo simulation from sketch-based methods:
+sketches reuse sampled graphs, often needing fewer samples than independent
+simulation per evaluation.
+\item It notes that CELF-style laziness helps reduce evaluations but can be
+inherently sequential, which motivates parallel or distributed variants.
+\end{itemize}
+
+\textbf{How to use it.} Cite this paper in the related-work section as evidence
+that scalable influence maximization is still an active systems problem. In our
+scope section, explicitly say we implement Monte Carlo greedy/CELF and a simple
+distributed greedy, while treating PaC-IM as advanced context.
+
+\subsection{Chen, Dey, and Kuhnle (2024)}
+
+\textbf{Helpful content.}
+\begin{itemize}
+\item The paper studies size-constrained monotone submodular maximization in
+MapReduce and adaptive-complexity models.
+\item It frames standard greedy as accurate but hard to scale because it needs
+centralized access and many adaptive rounds.
+\item It connects distributed algorithms with parallelizable low-adaptivity
+algorithms, which is useful for explaining why distributed influence
+maximization is not only about graph partitioning but also about reducing
+sequential dependence.
+\item It provides modern context for algorithms that keep approximation
+guarantees while reducing communication or adaptivity.
+\end{itemize}
+
+\textbf{How to use it.} Use this paper to strengthen the background paragraph on
+distributed submodular maximization. It is less necessary for implementation
+details, but valuable for positioning our simplified GreeDI experiment as a
+course-scale instance of a broader research direction.
+
+\subsection{Barik et al. (2025)}
+
+\textbf{Helpful content.}
+\begin{itemize}
+\item GreediRIS targets distributed influence maximization using reverse
+influence sampling (RIS).
+\item RIS converts seed selection into a maximum-$k$-coverage problem over
+random reverse reachable sets. A seed is good if it covers many sampled reverse
+reachable sets.
+\item The paper focuses on the seed-selection bottleneck in distributed RIS
+systems and uses a distributed streaming max-cover approach.
+\item It explicitly studies communication bottlenecks and introduces truncation
+as a knob that trades quality for lower communication.
+\end{itemize}
+
+\textbf{How to use it.} This is the strongest recent support for our
+communication-constrained angle. We can cite it when defining $q$ as a local
+candidate budget and when explaining why increasing $q$ should improve quality
+but increase communication.
+
+\section{Recommended Report Integration}
+
+\subsection{Stage 1: Background and Related Work}
+
+Use Kempe et al. for the application background and diffusion model. Use
+Nemhauser et al. for submodular maximization. Use Leskovec et al. for lazy
+evaluation. Use Mirzasoleiman et al., Chen et al., Wang et al., and Barik et al.
+to motivate distributed and scalable variants.
+
+\subsection{Stage 2: Representative Method}
+
+The representative method should be \textbf{centralized greedy with IC Monte
+Carlo estimation}, plus \textbf{CELF} as the main acceleration. The distributed
+extension should be a GreeDI-style method rather than a full RIS system, because
+it is easier to implement and directly matches the proposal.
+
+\subsection{Stage 3--4: Implementation and Experiments}
+
+Recommended algorithms:
+\begin{itemize}
+\item Random baseline.
+\item Degree baseline.
+\item PageRank or centrality baseline.
+\item Monte Carlo greedy.
+\item CELF/lazy greedy.
+\item Distributed local greedy plus coordinator greedy.
+\end{itemize}
+
+Recommended metrics:
+\begin{itemize}
+\item estimated influence spread $\widehat{\sigma}(S)$;
+\item runtime;
+\item number of spread evaluations;
+\item distributed quality ratio $\rho$;
+\item communication proxy $mq$;
+\item sensitivity to $m$, $q$, $k$, and propagation probability.
+\end{itemize}
+
+\section{Useful Text Snippets for the Final Report}
+
+\textbf{Problem motivation.} Influence maximization turns viral marketing,
+information diffusion, and intervention planning into a cardinality-constrained
+combinatorial optimization problem on graphs. Its importance comes from the
+fact that small seed sets can trigger large cascades, but selecting seeds
+purely by local centrality may waste budget on overlapping neighborhoods.
+
+\textbf{Theory bridge.} Under the IC model, the expected spread function is
+monotone and submodular. Thus each new seed has diminishing marginal benefit as
+the current seed set grows. This property connects influence maximization to
+the classical Nemhauser-Wolsey-Fisher theorem, giving the greedy algorithm a
+$(1-1/e)$ approximation guarantee.
+
+\textbf{Why CELF.} The main cost of greedy influence maximization is repeated
+spread estimation. CELF exploits submodularity by treating cached marginal
+gains as upper bounds, recomputing a node only when it may still be the best
+candidate. Therefore it preserves the greedy selection rule while reducing
+objective evaluations.
+
+\textbf{Why distributed greedy.} Centralized greedy assumes full access to the
+graph and candidate set. In distributed settings, each worker can select local
+candidates and send only a small set to a coordinator. This reduces
+communication but may lose quality when important cross-partition influence is
+not represented in the candidate pool.
+
+\begin{thebibliography}{9}
+\bibitem{nemhauser1978}
+G. L. Nemhauser, L. A. Wolsey, and M. L. Fisher.
+An analysis of approximations for maximizing submodular set functions - I.
+\emph{Mathematical Programming}, 14:265--294, 1978.
+
+\bibitem{kempe2003}
+D. Kempe, J. Kleinberg, and E. Tardos.
+Maximizing the spread of influence through a social network.
+\emph{KDD}, 2003.
+
+\bibitem{leskovec2007}
+J. Leskovec, A. Krause, C. Guestrin, C. Faloutsos, J. VanBriesen, and N. Glance.
+Cost-effective outbreak detection in networks.
+\emph{KDD}, 2007.
+
+\bibitem{mirzasoleiman2013}
+B. Mirzasoleiman, A. Karbasi, R. Sarkar, and A. Krause.
+Distributed submodular maximization: identifying representative elements in
+massive data.
+\emph{NeurIPS}, 2013.
+
+\bibitem{wang2023}
+L. Wang, X. Ding, Y. Gu, and Y. Sun.
+Fast and space-efficient parallel algorithms for influence maximization.
+\emph{PVLDB}, 17(3):400--413, 2023.
+
+\bibitem{chen2024}
+Y. Chen, T. Dey, and A. Kuhnle.
+Scalable distributed algorithms for size-constrained submodular maximization in
+the MapReduce and adaptive complexity models.
+\emph{Journal of Artificial Intelligence Research}, 80:1575--1622, 2024.
+
+\bibitem{barik2025}
+R. Barik, W. Cappa, S. M. Ferdous, M. Minutoli, M. Halappanavar, and
+A. Kalyanaraman.
+GreediRIS: Scalable influence maximization using distributed streaming maximum
+cover.
+\emph{Journal of Parallel and Distributed Computing}, 198:105037, 2025.
+\end{thebibliography}
+
+\end{document}

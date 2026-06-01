@@ -3,9 +3,9 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cs240-graph-partitioning"
+name = "cs240-influence-maximization"
 version = "0.1.0"
-description = "Graph partitioning experiments for communication-efficient distributed optimization."
+description = "Distributed influence maximization experiments with greedy and CELF algorithms."
 requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.0",
