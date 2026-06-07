@@ -1,0 +1,1627 @@
+                            Fast and Space-Efficient Parallel Algorithms
+                                    for Influence Maximization
+            Letong Wang                              Xiangyun Ding                                    Yan Gu                             Yihan Sun
+            UC Riverside                                UC Riverside                               UC Riverside                         UC Riverside
+          lwang323@ucr.edu                           xding047@ucr.edu                             ygu@cs.ucr.edu                     yihans@cs.ucr.edu
+ABSTRACT                                                                                     Given a graph 𝐺 = (𝑉 , 𝐸) and a stochastic diffusion model to specify
+Influence Maximization (IM) is a crucial problem in data science.                            how influence spreads along edges, we use 𝑛 = |𝑉 |, 𝑚 = |𝐸|, and
+The goal is to find a fixed-size set of highly influential seed vertices                     𝜎 (𝑆) to denote the expected influence spread on 𝐺 using the seed
+on a network to maximize the influence spread along the edges.                               set 𝑆 ⊆ 𝑉 . The IM problem aims to find a seed set 𝑆 with size 𝑘
+While IM is NP-hard on commonly used diffusion models, a greedy                              to maximize 𝜎 (𝑆). Given its importance, IM is widely studied, and
+algorithm can achieve (1 − 1/𝑒)-approximation by repeatedly se-                              we refer the audience to a list of surveys [4, 6, 88] that reviews the
+lecting the vertex with the highest marginal gain in influence as the                        numerous applications and a few hundred papers on this topic.
+seed. However, we observe two performance issues in the existing                                 Among various diffusion models, Independent Cascade (IC) [32]
+work that prevent them from scaling to today’s large-scale graphs:                           (defined in Sec. 2) is one of the earliest and most widely used. In IC,
+space-inefficient memorization to estimate marginal gain, and time-                          only seeds are active initially. In each timestamp, each vertex 𝑣 that
+inefficient seed selection process due to a lack of parallelism.                             is newly activated in the last timestamp will activate its neighbors
+   This paper significantly improves the scalability of IM using                             𝑢 with a probability 𝑝 𝑣𝑢 . Although IM is NP-hard on IC [42], the
+two key techniques. The first is a sketch-compression technique for                          monotone and submodular properties of IC allow for a greedy
+the independent cascading model on undirected graphs. It allows                              algorithm with (1 − 1/𝑒)-approximation [42]. Given the current
+combining the simulation and sketching approaches to achieve                                 seed set 𝑆, the greedy algorithm selects the next seed as the vertex
+a time-space tradeoff. The second technique includes new data                                with the highest marginal gain, i.e., arg max𝑣 ∈𝑉 {𝜎 (𝑆 ∪ {𝑣 }) −𝜎 (𝑆)}.
+structures for parallel seed selection. Using our new approaches,                            Due to the theoretical guarantee, this greedy strategy generally
+we implemented PaC-IM: Parallel and Compressed IM.                                           gives better solution quality than other heuristics [51]. However,
+   We compare PaC-IM with state-of-the-art parallel IM systems                               the challenge lies in estimating the influence 𝜎 (𝑆) of a seed set 𝑆.
+on a 96-core machine with 1.5TB memory. PaC-IM can process the                               Early work uses Monte-Carlo (MC) experiments by averaging 𝑅 ′
+ClueWeb graph with 978M vertices and 75B edges in about 2 hours.                             rounds of influence diffusion simulation [42, 49], but the solution
+On average, across all tested graphs, our uncompressed version                               quality relies on a high value of 𝑅 ′ (usually around 104 ). Later work
+is 5–18× faster and about 1.4× more space-efficient than existing                            uses sketch-based approaches [16, 20–22, 59, 74, 75] to avoid MC
+parallel IM systems. Using compression further saves 3.8× space                              experiments. Such algorithms pre-store 𝑅 sketches. Each sketch
+with only 70% overhead in time on average.                                                   is a sampled graph—an edge (𝑣, 𝑢) is chosen with probability 𝑝 𝑣𝑢 .
+                                                                                             When estimating 𝜎 (𝑆), the sampled graphs are used as the results of
+PVLDB Reference Format:                                                                      the MC experiments of influence diffusion. In an existing study [21],
+Letong Wang, Xiangyun Ding, Yan Gu, and Yihan Sun. Fast and                                  using 𝑅 ≈ 200 sketches achieves a similar solution quality to 𝑅 ′ =
+Space-Efficient Parallel Algorithms for Influence Maximization. PVLDB,                       104 MC experiments, greatly improving efficiency. The sketches can
+17(3): 400 - 413, 2023.
+                                                                                             either be the sampled graphs and/or memoizing more information
+doi:10.14778/3632093.3632104
+                                                                                             from the sampled graphs to accelerate influence computation, such
+PVLDB Artifact Availability:                                                                 as connectivity [20, 31] or strong connectivity [59].
+The source code, data, and/or other artifacts have been made available at                        While numerous sketch-based solutions have been developed,
+https://github.com/ucrparlay/Influence-Maximization.                                         we observed great challenges in scaling them to today’s large-scale
+                                                                                             graphs. In a benchmark paper [2] on nine state-of-the-art (SOTA)
+1    INTRODUCTION                                                                            sequential IM solutions, none of them can process the Friendster
+                                                                                             (FT) graph [47] with 65M vertices and 3.6B edges due to timeout
+Influence Maximization (IM) is a crucial problem in data science.
+                                                                                             (more than 40 hours) or out-of-memory. Even the recent parallel
+The goal is to find a fixed-size set of highly influential seed vertices
+                                                                                             algorithms [31, 55, 56, 63] need more than half an hour to process
+on a network to maximize the spread of influence along the edges.
+                                                                                             FT on a 96-core machine (See Table 4). Two major challenges exist
+For example, in viral marketing, the company may choose to send
+                                                                                             to scale sketch-based approaches to billion-scale graphs. The first is
+free samples to a small set of users in the hope of triggering a large
+                                                                                             the space. Storing each sketch usually needs per-vertex information.
+cascade of further adoptions through the “word-of-mouth” effects.
+                                                                                             This indicates 𝑂 (𝑅𝑛) space, which is expensive on large graphs
+This work is licensed under the Creative Commons BY-NC-ND 4.0 International                  (empirically, 𝑅 is a few hundred). The second is insufficient paral-
+License. Visit https://creativecommons.org/licenses/by-nc-nd/4.0/ to view a copy of
+this license. For any use beyond those covered by this license, obtain permission by         lelism. Many SOTA IM solutions use the CELF [49] optimization for
+emailing info@vldb.org. Copyright is held by the owner/author(s). Publication rights         seed selection (see details below), which is inherently sequential.
+licensed to the VLDB Endowment.                                                                  This paper takes a significant step to improve the scalability of
+Proceedings of the VLDB Endowment, Vol. 17, No. 3 ISSN 2150-8097.
+doi:10.14778/3632093.3632104                                                                 sketch-based IM solutions and tests the algorithms on real-world
+                                                                                             billion-scale graphs. We propose two techniques to improve both
+
+
+
+
+                                                                                       400
+                 Ours1     Ours0.1  InfuserMG                            Ripples
+              Time Space Time Space Time Space                          Time Space         CELF is inherently sequential. We proposed two novel solutions
+          EP 1.00 1.00   1.67 0.39   1.28 1.18                          12.6 1.46          that achieve high parallelism for CELF. The challenge is evaluating
+    Sparse (Road and kNN) Scale-free (Social and Web)
+
+
+
+
+        SLDT 1.00 1.00   1.76 0.38   1.60 1.17                          22.8 1.65          more vertices in parallel while avoiding "unpromising" vertices
+        DBLP 1.00 1.00   1.06 0.21    2.5 1.40                          7.82 0.60          as in CELF. Our first solution is a binary search tree (BST) called
+          YT 1.00 1.00   2.00 0.17   5.09 1.44                          21.8 0.92          P-tree [10, 12, 73] (Sec. 4.1). We highlight its theoretical efficiency
+          OK 1.00 1.00   4.50 0.40   9.13 1.3                           37.0 12.8
+                                                                                           (Thm. 4.1 to 4.3). Our second solution is referred to as Win-Tree
+           LJ 1.00 1.00  3.42 0.27   10.2 1.76                          21.7 3.41
+        TW* 1.00 1.00    4.05 0.41   6.84 1.63                          62.8 11.4          (Sec. 4.2), which has lower space usage, leading to slightly better
+         FT* 1.00 1.00   4.75 0.41   15.4 1.64                              -    -         overall performance. The two solutions work on both directed and
+         SD* 1.00 1.00   4.18 0.36   11.2 1.69                              -    -         undirected graphs and any diffusion model with submodularity.
+      MEAN 1.00 1.00     2.70 0.32   5.21 1.66                          22.0 2.53          They are potentially extendable to other optimization problems
+         GER 1.00 1.00   0.91 0.19   2.86 1.89                          42.0 1.72          with submodular objective functions (see discussions in Sec. 7).
+         USA 1.00 1.00   0.94 0.20   3.63 1.90                           584 1.79             We experimentally study the performance of PaC-IM and com-
+         HT5 1.00 1.00   0.95 0.18   5.90 1.41                          12.9 0.58
+         HH5 1.00 1.00   0.93 0.17   3.62 1.42                          6.30 0.38
+                                                                                           pare it with SOTA parallel IM systems. We tested 17 graphs, five
+         CH5 1.00 1.00   1.51 0.22   62.2 1.80                          2.91 0.34          of which have over a billion edges. Besides social networks, we
+         GL5 1.00 1.00   0.92 0.22   5.96 1.87                          11.9 0.30          also tested other real-world graphs, including web graphs, road
+      COS5* 1.00 1.00    0.82 0.19   6.66 1.88                              -    -         graphs, and 𝑘-NN graphs. One can consider IM on such graphs
+      MEAN 1.00 1.00     0.98 0.19   6.60 1.73                          20.2 0.64          as studying the influence diffusion among webpages and geologi-
+     MEAN     1.00 1.00  1.76 0.26   5.66 1.56                          18.3 1.34          cally or geometrically close objects. On all tested graphs, PaC-IM
+    0 .2 .5 1 2 4 8 16 >16
+                                                        MEAN = geometric mean              achieves the best running time and space usage while guaranteeing
+Figure 1: Heatmap of relative running time and space usage, normal-                        comparable or better solution quality to all baselines. Compared to
+ized to Ours1 . Ours1 : PaC-IM with no compression. Ours0.1 : PaC-IM with                  the best baseline, PaC-IM with no compression is 5.6× faster and is
+10× sketch compression. InfuserMG [31] and Ripples [56]: existing parallel                 1.5× more space-efficient on average (geometric mean across tested
+IM systems. Lower/green is better. The graph information is in Tab. 3. The                 graphs), and is 3.2× faster and uses 6× less space using compres-
+running times are in Tab. 4. ∗: graphs with more than a billion edges.                     sion with 𝛼 = 0.1. Due to space- and time-efficiency, PaC-IM is the
+                                                                                           only system to process the largest graph ClueWeb [54] with 978M
+space and time. The first is a sketch compression technique for the                        vertices and 75B edges. We believe PaC-IM is the first IM solution
+IC model on undirected graphs, which limits the auxiliary space by a                       that scales to tens of billions of edges and close to a billion vertices.
+user-defined capacity to reduce space usage. Our second technique                             For page limit, we provide the full version of this paper [77] with
+is parallel data structures for seed selection to reduce running                           full proofs and more experimental evaluations.
+time, which works on general graphs and any diffusion model with
+submodularity. Combining the new ideas, we implemented PaC-                                2    PRELIMINARIES
+IM: Parallel and Compressed IM. We show a heatmap in Fig. 1                                For graph 𝐺 = (𝑉 , 𝐸), we use 𝑛 = |𝑉 | and 𝑚 = |𝐸|. Since our
+to overview our results. On the aforementioned FT graph, PaC-IM                            sketch compression is designed for undirected graphs and IC model,
+only uses 128 seconds without compression (using 2.5× auxiliary                            throughout the paper, we assume 𝐺 is undirected and consider the
+space on top of the input graph), or 609 seconds when limiting                             IC model unless otherwise specified. A connected component (CC)
+auxiliary space in 0.45× input size, using a 96-core machine. PaC-                         is a maximal subset in 𝑉 s.t. every two vertices in it are connected by
+IM is at least 15× faster than existing parallel solutions while using                     a path. In a max-priority-queue, we use top to refer to the element
+much less space and achieving the same solution quality (see Tab. 4).                      with the largest key, and use function pop to find and remove the
+Below, we overview the key contributions of this paper.                                    top element. 𝑂˜ (𝑓 (𝑛)) denotes 𝑂 (𝑓 (𝑛) · polylog(𝑛)).
+   Our first contribution is a compression scheme for sketches                             Computational Model. We use the fork-join parallelism [13, 23],
+on undirected graphs and the IC model, which allows for user-                              and the work-span analysis [15, 36, 38]. We assume a set of threads
+defined compression ratios (details in Sec. 3). Similar to existing                        that access a shared memory. A thread can fork two child software
+work [20, 31], PaC-IM memoizes connected components (CC) of the                            threads to work in parallel. When both children complete, the
+sketches but avoids the 𝑂 (𝑅𝑛) space to store per-vertex information.                      parent process continues. A parallel for-loop can be simulated by
+Our idea is a combination (and thus a tradeoff) of memoization                             recursive forks in logarithmic levels. The work of an algorithm is
+and simulation. The idea is to memoize the CC information only                             the total number of instructions, and the span is the length of the
+for centers 𝐶 ⊆ 𝑉 , where |𝐶 | = 𝛼𝑛, and 𝛼 ∈ [0, 1] is a user-defined                      longest sequence of dependent instructions. We can execute the
+parameter. A local simulation will retrieve the influence information                      computation using a randomized work-stealing scheduler [3, 15]
+of a non-center vertex. Theoretically, we show that we can limit                           in practice. We use atomic operation WriteMax(𝑡, 𝑣 new ) to write
+the auxiliary space by a factor of 𝛼 by increasing the time by a                           value 𝑣 new at the memory location 𝑡 if 𝑣 new is larger than the current
+factor of 𝑂 (1/𝛼). Experimentally, such tradeoff is studied in Fig. 7.                     value in 𝑡. We use compare-and-swap to implement WriteMax.
+   Our second contribution is two new parallel data structures
+for seed selection. Recall that many SOTA IM solutions [20, 21,                            The Influence Maximization (IM) Problem
+31, 43, 56] use the CELF optimization [49] (details in Sec. 2) for seed
+                                                                                           Given a graph 𝐺 = (𝑉 , 𝐸), an influence diffusion model 𝑀 specifies
+selection. In a nutshell, CELF is an iterative approach that lazily
+                                                                                           how influence spreads from a set of current active vertices to acti-
+evaluates the marginal gain of vertices in seed selection, one at a
+time. While laziness reduces the number of vertices to evaluate,                           vate more vertices in 𝑉 . Given a seed set 𝑆 ⊆ 𝑉 , we use 𝜎𝐺,𝑀 (𝑆)
+
+
+
+
+                                                                                     401
+     Algorithm 1: Sketch-based IM algorithm                                                  Kempe et al. [42] proved that IM under the IC model is NP-hard,
+     Notations :𝐺 = (𝑉 , 𝐸 ): the input graph. 𝑘: the number of seed vertices.            and that the influence spread function has the following properties:
+                   𝑅: the number of sampled graphs                                        for every 𝑋, 𝑌 ⊆ 𝑉 where 𝑋 ⊆ 𝑌 , and 𝑣 ∈ 𝑉 \ 𝑌 , we have:
+     Output: 𝑆: a set of 𝐾 seeds that maximizes influence on 𝐺                                Monotonicity:             𝜎 (𝑌 ∪ {𝑣 }) ≥ 𝜎 (𝑌 )                (1)
+     Notes: Φ1...𝑅 : 𝑅 sketches computed from 𝑅 sampled graphs
+     // Step 1: Sketch construction                                                         Submodularity: 𝜎 (𝑋 ∪ {𝑣 }) − 𝜎 (𝑋 ) ≥ 𝜎 (𝑌 ∪ {𝑣 }) − 𝜎 (𝑌 ) (2)
+1 ParallelForEach 𝑟 ← 1 . . . 𝑅 do                                                        These two properties allow the following greedy algorithm (later
+2    Φ𝑟 ← Sketch(𝑟 )                                // Compute the 𝑟 -th sketch           referred to as GeneralGreedy) to give a (1 − 1/𝑒)-approximation.
+     // Step 2: Seed selection using CELF                                                 The algorithm starts with 𝑆 = ∅ and repeatedly adds the vertex
+3 𝑆←∅                                                                                     with the highest marginal gain to 𝑆, until |𝑆 | = 𝑘. The marginal
+4 while |𝑆 | < 𝑘 do                                                                       gain Δ(𝑣 | 𝑆) of a vertex 𝑣 given the current seed set 𝑆 is defined as:
+5     𝑠 ∗ ←NextSeed(𝑆, Φ1..𝑅 ) // Find arg max𝑣 ∈𝑉 Marginal(𝑆, 𝑣, Φ1..𝑅 )                                     Δ(𝑣 | 𝑆) = 𝜎 (𝑆 ∪ {𝑣 }) − 𝜎 (𝑆)                (3)
+      MarkSeed(𝑠 ∗ , Φ1..𝑅 , 𝑆)        // Mark 𝑠 ∗ as a seed in the sketches
+                                                                                             With clear context, we omit 𝑆 and use Δ(𝑣), and also call it the
+6
+      𝑆 ← 𝑆 ∪ {𝑠 ∗ }
+                                                                                          score or the true score of 𝑣. We call the process to compute the true
+7
+8 return 𝑆
+                                                                                          score of a vertex an evaluation. To estimate 𝜎 (·), early solutions
+                                                                                          average 𝑅 ′ rounds of Monte Carlo (MC) experiments of influence
+     Algorithm 2: Sequential Seed Selection with CELF                                     diffusion simulation. However, on real-world graphs, this approach
+  Notes: 𝑄: max-priority-queue on all vertices 𝑣 ∈ 𝑉 with key Δ̄[𝑣 ]                      requires a large value of 𝑅 ′ to converge, which can be expensive.
+     Initially Δ̄[𝑣 ] = Marginal( ∅, 𝑣, Φ1..𝑅 )                                           Sketch-Based Algorithms. Sketch-based algorithms are proposed
+1 Function NextSeed(𝑆, Φ1..𝑅 )         // 𝑆: current seed set; Φ1..𝑅 : 𝑅 sketches         to accelerate Δ(𝑣) evaluations. Instead of running independent MC
+2    Repeat                                                                               experiments for each evaluation, sketch-based algorithms statically
+3         𝑠 ∗ ← 𝑄.Pop( )                       // Pop: find and remove the top            sample 𝑅 graphs to reflect MC experiments and consistently simu-
+4         Δ̄[𝑠 ∗ ] ← Marginal(𝑆, 𝑠 ∗ , Φ1..𝑅 )                                            late the results on them. Using sketches allows for much faster con-
+5         if Δ̄[𝑠 ∗ ] > Δ̄[𝑄.Top( )] then return 𝑠 ∗                                      vergence, making the number of needed simulations (i.e., sketches)
+6         else 𝑄.Insert(𝑠 ∗ )                 // insert 𝑠 ∗ back with new score           𝑅 smaller than that in MC experiments. Hence, sketch-based algo-
+                                                                                          rithms are widely studied [16, 20–22, 59, 74, 75]. We summarize
+                                                                                          sketch-based algorithms in two steps (see Alg. 1): sketch construction
+                        Table 1: Notations in the paper.
+                                                                                          and seed selection. Next, we introduce both steps with optimizations
+𝑮 = (𝑽 , 𝑬 ) : The input graph.                          𝒌 : number of seeds.             in previous work. We summarize some related work in Tab. 2, and
+𝝈 (𝑺 ) or 𝝈 𝑮,𝑴 (𝑺 ) : The influence spread of seed set 𝑆 ⊆ 𝑉 on graph 𝐺                  review more in Sec. 6. Some notations are given in Tab. 1.
+   and diffusion model 𝑀.                                                                 Sketch Construction. In the earliest sketch-based algorithm Stat-
+𝚫(𝒗 | 𝑺 ) : The true score (marginal gain) of 𝑣 on top of 𝑆. Δ(𝑣 | 𝑆 ) =
+                                                                                          icGreedy, 𝑅 sampled graphs [21] are explicitly stored as sketches.
+   𝜎 (𝑆 ∪ {𝑣 } ) − 𝜎 (𝑆 ). We omit 𝑆 and use Δ(𝑣) with clear context.
+¯ ] : The stale score (lazily-evaluated marginal gain) of 𝑣 stored in an
+𝚫[𝒗
+                                                                                          In the IC model, the 𝑟 -th sketch corresponds to a sampled graph
+   array. It is an upper bound of Δ(𝑣 | 𝑆 ) for the current seed set 𝑆.                   𝐺𝑟′ = (𝑉 , 𝐸𝑟′ ), where 𝐸𝑟′ ⊆ 𝐸, such that each edge 𝑒 ∈ 𝐸 is sampled
+𝚽1..𝑹 : the sketches. Formally defined in Sec. 3.                                         with probability 𝑝𝑒 , meaning a successful activation. An evaluation
+𝝆 and 𝜶 : 𝜌 = 𝛼𝑛 is the number of centers.                                                will average the number of reachable vertices on all sampled graphs
+                                                                                          from the seed set 𝑆. A later paper Infuser [31] proposed the fusion
+    Function names:
+                                                                                          optimization, which uses hash functions to avoid explicitly storing
+    Sketch(𝐺, 𝑟 ) : Compute the 𝑟 -th sketch from graph 𝐺
+                                                                                          the sampled graphs 𝐺𝑟′ . They sample an edge 𝑒 in a sketch 𝐺𝑟′ with
+    Marginal(𝑆, 𝑣, Φ1..𝑅 ) : The marginal gain of vertex 𝑣 given the current
+      seed set 𝑆 estimated from 𝑅 sketches Φ1..𝑅                                          a random number generated from seed ⟨𝑒, 𝑟 ⟩, such that whether an
+    NextSeed(𝑆, Φ1..𝑅 ) : Greedily determine the next seed based on sketches              edge is selected in a certain sketch is always deterministic, and a
+      Φ1..𝑅 given the current seed set 𝑆.                                                 sampled graph 𝐺𝑟′ can be fully reconstructed from the sketch id 𝑟 .
+                                                                                          We also use this idea in our sketch compression algorithm.
+                                                                                             Many existing algorithms also use memoization to avoid influ-
+to denote the expected number of vertices that 𝑆 can activate (in-
+                                                                                          ence spread simulation on sketches. On undirected graphs and the
+cluding 𝑆) under diffusion model 𝑀 on graph 𝐺. The IM problem is
+                                                                                          IC model, the MixGreedy paper [20] first observed that a vertex 𝑣’s
+to find 𝑆 ∗ ⊆ 𝑉 with size 𝑘, s.t. 𝑆 ∗ maximizes the influence spread
+                                                                                          influence on a sketch is all vertices in the same connected compo-
+function 𝜎𝐺,𝑀 . With clear context, we omit 𝑀 and 𝐺, and use
+                                                                                          nent (CC) as 𝑣, but they only used this idea to select the first seed.
+𝜎 (·). Several propagation models have been proposed, including
+                                                                                          Later, InfuserMG adopts this idea to select all seeds and memoizes
+the Independent Cascade (IC) model [32], Linear Threshold (LT)
+                                                                                          the CC information of each sampled graph as the sketch. A vertex
+model [34, 67], and more [18, 42, 52, 65]. Since our sketch compres-
+                                                                                          𝑣’s score is then the average of the (inactivated) CC sizes on all
+sion focuses on the IC model, we briefly introduce it here. In the IC
+                                                                                          𝑅 sketches, which can be obtained in 𝑂 (𝑅) cost. This approach
+model, influence spreads in rounds. Initially, only the seed vertices
+                                                                                          avoids simulation but leads to 𝑂 (𝑅𝑛) space that is expensive for
+are active. In round 𝑖, each vertex 𝑢 that was newly activated in
+                                                                                          large graphs. Sec. 3 presents how our sketch compression approach
+round 𝑖 − 1 attempts to spread the influence via all incident edges
+                                                                                          reduces this high space usage.
+𝑒, and activate the other endpoint 𝑣 with probability 𝑝𝑒 .
+
+
+
+
+                                                                                    402
+ Table 2: Existing approaches and our new one. MixGreedy uses different approaches to select the first seed and the other seeds, so we list them separately.
+ “#vertices per seed”: number of vertices to visit in all re-evaluations involved to find a seed. For StaticGreedy, we assume the fusion optimization in [31] to
+ avoid explicitly storing sampled graphs. 𝑛: number of vertices. 𝑛𝑐 : number of re-evaluations needed in CELF. 𝑇 : the average number of reachable vertices in a
+ simulation (or a sketch). Empirically, 𝑇 is large, and 𝑛𝑐 ≪ 𝑛. To achieve similar quality, 𝑅 ≪ 𝑅 ′ .
+                                        Randomization                Compute Influence Select Seed #vertics per seed                       Space     Parallel
+         GeneralGreedy [42]       𝑅 ′ Monte Carlo experiments             Simulation          Evaluate all         𝑂 (𝑛𝑅 ′𝑇 )              𝑂 (𝑛)       no
+     MixGreedy [20] 1st Seed Fixed 𝑅 sampled graphs                      Memoization          Evaluate all          𝑂 (𝑛𝑅)                 𝑂 (𝑛)       no
+      MixGreedy [20] Others 𝑅 ′ Monte Carlo experiments                   Simulation              CELF            𝑂 (𝑛𝑐 𝑅 ′𝑇 )             𝑂 (𝑛)       no
+          StaticGreedy [21]          Fixed 𝑅 sampled graphs               Simulation              CELF             𝑂 (𝑛𝑐 𝑅𝑇 )              𝑂 (𝑛)       no
+           InfuserMG [31]            Fixed 𝑅 sampled graphs              Memoization              CELF             𝑂 (𝑛𝑐 𝑅)               𝑂 (𝑛𝑅)       yes
+         PaC-IM (this work)          Fixed 𝑅 sampled graphs Simulation + Memoization              CELF      𝑂 (𝑛𝑐 𝑅 · min(𝑇 , 1/𝛼 ) ) 𝑂 ( (1 + 𝛼𝑅)𝑛)   yes
+
+
+     Algorithm 3: Our sketch algorithm with compression                                      in 𝑄 may be stale but are always upper bounds of the true scores.
+     Global Variables: 𝐺 = (𝑉 , 𝐸 ): input graph; 𝑅: number of sketches                      We call this lazily-evaluated score the stale score of 𝑣 and denote
+        𝐶 = {𝑐 1 , 𝑐 2 , . . . , 𝑐 𝜌 } ⊆ 𝑉 : randomly selected centers. 𝜌 = |𝐶 |             it as Δ̄[𝑣] stored in an array. To select the next seed, CELF keeps
+     Notes: A sketch Φ𝑟 is a triple ⟨𝑟, size[1..𝜌 ], label[1..𝜌 ] ⟩, defined at the          popping the top element 𝑣 from 𝑄, re-evaluating its true score Δ(𝑣),
+            beginning of Sec. 3.                                                             storing Δ(𝑣) to Δ̄[𝑣], and inserting it back unless Δ(𝑣) is greater
+ 1 Function Sketch(𝑟 )                                         // 𝑟 : sketch id              than the current largest value in 𝑄 (Line 3-6). In this case, we can
+ 2    Compute the connected components of graph 𝐺 ′ = (𝑉 , 𝐸 ′ ), where                      set 𝑣 as the next seed without more evaluations, as the true scores
+       𝐸 = { (𝑢, 𝑣) | (𝑢, 𝑣) ∈ 𝐸, Sample(𝑢, 𝑣, 𝑟 ) = true}                                   of other vertices can not exceed their values in 𝑄. Although CELF
+ 3    ParallelForEach 𝑐𝑖 ∈ 𝐶 do                                                              can reduce the number of evaluations, it is essentially sequential
+ 4        label[𝑖 ] ← min 𝑗 {𝑐 𝑗 is in the same CC as 𝑐𝑖 }                                   and evaluates vertices one by one. In Sec. 4, we present our new
+ 5    ParallelForEach 𝑐𝑖 ∈ 𝐶 do                                                              data structures that allow for parallel evaluations in CELF.
+ 6        if label[𝑖 ] = 𝑖 then size[𝑖 ] ← the CC size of center 𝑐𝑖
+ 7    return ⟨𝑟, label[1..𝜌 ], size[1..𝜌 ] ⟩                                                 3    SPACE-EFFICIENT SKETCHES
+   // sample an edge 𝑒 with probability 𝑝𝑒 for sketch 𝑟                                      This section presents our new technique to construct compressed
+ 8 Function Sample(𝑒, 𝑟 )               // 𝑒: edge identifier; 𝑟 : sketch identifier         sketches in parallel for the IC model on undirected graphs. In this
+ 9      𝑝 ← random(𝑒, 𝑟 )        // Generate 𝑝 ∈ [0, 1] from random seed 𝑒, 𝑟                setting, as discussed in Sec. 2, a vertex 𝑣 can activate all vertices in
+10      return 𝑝 ≤ 𝑝𝑒                                                                        the same CC on a certain sketch. Thus, memoizing per-vertex CC
+   // 𝛿: marginal influence of 𝑣 on sketch Φ𝑟 . 𝑙: label of 𝑣’s CC in sketch Φ𝑟 if 𝑣         information in sketches [31] can accelerate the influence evaluation
+      is connected to any center; otherwise 𝑙 = −1. 𝑆: the current seed set.                 but requires 𝑂 (𝑅𝑛) space, which does not scale to large input graphs.
+11 Function ⟨𝛿, 𝑙 ⟩ = GetCenter(Φ𝑟 , 𝑣, 𝑆 )                                                  Alternatively, one can avoid memoization and run a simulation by
+12       Start BFS from 𝑣 on a sampled subgraph of 𝐺, where an edge 𝑒 ∈ 𝐸                    traversing the sampled graph to find the CC when needed. This
+           exists if Sample(𝑒, 𝑟 ) = true. Count the #reached-vertices as 𝑛 ′                requires no auxiliary space but can take significant time.
+13       if a center 𝑐𝑖 ∈ 𝐶 is encountered during BFS then                                       Our approach combines the benefit of both, using bounded-size
+14            𝑙 ← Φ𝑟 .label[𝑖 ]                      // Find the label of the center         auxiliary space while allowing for efficiency. Our key idea is to
+15            return ⟨Φ𝑟 .size[𝑙 ], 𝑙 ⟩      // the CC size and label of the center          only partially memoize CC information in each sketch, and retrieve
+16       if any 𝑣 ′ ∈ 𝑆 has been visited by BFS then return ⟨0, −1⟩                          this information by partial simulations. In PaC-IM, we only store
+17       else return ⟨𝑛 ′ , −1⟩             // influence is #visited vertices in BFS         the CC information for 𝜌 = 𝛼 · 𝑛 center vertices 𝐶 ⊆ 𝑉 , where
+   // Marginal gain of 𝑣 given seed set 𝑆 on sketches Φ1..𝑅                                  𝛼 ∈ [0, 1] is a user-defined parameter. Each sketch Φ𝑟 is a triple
+18 Function Marginal(𝑆, 𝑣, Φ1..𝑅 )                                                           ⟨𝑟, label[·], size[·]⟩ corresponding to an implicit sampled graph 𝐺𝑟′
+19     ParallelForEach 𝑟 ← 1..𝑅 do                                                           from 𝐺, where each edge 𝑒 = (𝑢, 𝑣) is retained with probability 𝑝𝑒 .
+20          ⟨𝛿𝑟 , ·⟩ ← GetCenter(Φ𝑟 , 𝑣, 𝑆 )                                                 • 𝑟 : the sketch id. Similar to the fusion idea mentioned in Sec. 2,
+                  ∑︁
+21     return ( 𝑟𝑅=1 𝛿𝑟 )/𝑅              // the sum can be computed in parallel                the sketch id fully represents the sampled graph.
+22 Function MarkSeed(𝑣, Φ1..𝑟 , 𝑆 )                                                          • label[1..𝜌]: the CC label of center 𝑐𝑖 on this sketch, which is the
+23    ParallelForEach 𝑟 ← 1..𝑅 do                       // For each sketch Φ𝑟                  smallest center id 𝑗 where 𝑐 𝑗 is in the same CC as 𝑐𝑖 .
+24        ⟨𝛿, 𝑙 ⟩ ← GetCenter(Φ𝑟 , 𝑣, 𝑆 )                                                    • size[1..𝜌]: if label[𝑖] = 𝑖 (i.e., 𝑖 represents the label of its CC),
+25        if 𝑙 > 0 then Φ𝑟 .size[𝑙 ] ← 0 // Clear the corresponding CC size                    size[𝑖] is the influence of center 𝑐𝑖 on this sketch. It is initially
+                                                                                               the CC size of 𝑐𝑖 and becomes 0 when any vertex in this CC is
+                                                                                               selected as a seed.
+ Seed Selection with CELF. A useful optimization for the greedy
+ algorithm is CELF [49], which avoids evaluating all vertices in                             Algorithm Overview. We first present the high-level idea of our
+ NextSeed. CELF uses lazy evaluation for submodular functions                                sketch compression algorithm. We present our algorithm in Alg. 3
+ and evaluates a vertex only if it becomes a “promising” candidate for                       and an illustration in Fig. 2. As mentioned, we select 𝜌 = 𝛼𝑛 center
+ the next seed. We show the CELF seed selection algorithm in Alg. 2.                         vertices uniformly at random. We only store the CC information
+ CELF uses a priority queue 𝑄 to maintain all vertices with their                            (label and size) for the centers in sketches. We use a global flag
+ scores as the key. Due to submodularity, Δ(𝑣) is non-increasing                             array to indicate if a vertex is a center, and thus the total space
+ with the expansion of the seed set 𝑆. With lazy evaluation, the scores                      is 𝑂 ((1 + 𝛼𝑅)𝑛). To retrieve the CC size of a vertex 𝑣 on sketch
+
+
+
+
+                                                                                       403
+                   Input graph                                               Round 1            Select D as first seed          Round 2
+                                                                    𝑐"                                                                                     𝑐"
+                          𝑐"           Sketch 1     𝑐!    A              F             center 𝑐! 𝑐"          center 𝑐! 𝑐"
+                                                                                                                                            𝑐! A              F
+         𝑐!
+                 A           F                                                         vertex B F            vertex B F
+                                                    B          D            E           label 1 1              label 1 1                    B           D            E
+         B             D          E
+                                      Sk                  C G H                          size 5 -               size 0 -                          C G H
+                 C     G    H           et c                                                               (update size[1] to 0)
+                                            h2    Example 1: Evaluating D on sketch 1:                                           Example 3: Evaluating A on sketch 1:
+                                                  Search from D, encounter center F (center id is 𝟐).                            Search from A, encounter B (center id is 𝟏).
+       vertex A B C D E F G H                     𝑙𝑎𝑏𝑒𝑙 𝟐 is 1 ⇒ Marginal gain is 𝑠𝑖𝑧𝑒 𝟏 = 5                                     𝑙𝑎𝑏𝑒𝑙 𝟏 is 1 ⇒ Marginal gain is 𝑠𝑖𝑧𝑒 𝟏 = 𝟎
+     center id - 1 - - - 2 - -                                      𝑐"                                                                                      𝑐"
+                                                   𝑐!
+                                                          A              F              center 𝑐! 𝑐"        center 𝑐! 𝑐"
+                                                                                                                                           𝑐!
+                                                                                                                                                 A               F
+              Centers                                                                   vertex B F          vertex B F
+              Selected seeds
+                                                   B            D            E                                                             B            D            E
+                                                                                         label 1 2           label 1 2
+              Sampled edge in a sketch                    C     G        H                size 2 2            size 2 2                           C      G        H
+              Unsampled edge in a sketch          Example 2: Evaluating D on sketch 2:                         (unchanged)     Example 4: Evaluating H on sketch 2:
+              Initial connected component         Search from D, no centers seen; visited D, G, H.                             Search from H, encounter seed D.
+              Activated connected component       Marginal gain is 3 (3 vertices visited in BFS)                               Marginal gain is 0 (already activated)
+
+                Figure 2: An example of our sketch compression on a graph with 8 vertices (B and F as centers) and 𝑅 = 2 sampled graphs.
+
+
+Φ𝑟 , we start a breadth-first search (BFS) from 𝑣. If any center 𝑐𝑖 is                     (Example 3 in Fig. 2). Otherwise, if the BFS terminates without
+encountered, 𝑣 should activate the same set of vertices as 𝑐𝑖 on this                      visiting any centers, it will return -1 for the label 𝑙. The influence 𝛿
+sketch. As such, we can stop searching and use 𝑐𝑖 ’s influence (CC                         is either the number of vertices 𝑛 ′ visited during the BFS, which
+size) as the influence for 𝑣. If 𝑣 is not connected to any center, the                     is also the size of CC containing 𝑣 (Example 2 in Fig. 2), or 𝛿 = 0
+CC containing 𝑣 is likely small, and the BFS can visit all of them                         (Line 16) if any seed is visited during BFS (Example 4 ). Using the
+quickly. In either case, the number of visited vertices in BFS can                         GetCenter function, the marginal influence of 𝑣 on sketch Φ𝑟 can
+be bounded. In Thm. 3.1, we show that compressing the auxiliary                            be obtained as the first return value 𝛿 of GetCenter(Φ𝑟 , 𝑣, 𝑆).
+space by a factor of 𝛼 roughly increases the evaluation time by                            Marking a Seed (MarkSeed(𝑠 ∗, Φ1..𝑅 )). The function updates the
+a factor of 𝑂 (1/𝛼). By controlling the number of centers, we can                          sketches when 𝑠 ∗ ∈ 𝑉 is selected as a seed. For each sketch Φ𝑟 , the
+achieve a tradeoff between the evaluation time and space usage.                            CC label of 𝑠 ∗ is the second return value of GetCenter(Φ𝑟 , 𝑠 ∗, 𝑆).
+    Next, we elaborate on the three functions in Alg. 1: Sketch(𝐺, 𝑟 ),                    If the label is not −1, we set Φ [𝑟 ].size[𝑙] as 0—since 𝑠 ∗ is selected,
+which constructs the 𝑟 -th sketch from 𝐺, Marginal(𝑆, 𝑣, Φ1..𝑅 ),                          all other vertices in this CC will get no marginal gain on this sketch.
+which computes the score (marginal gain) of a vertex 𝑣 on top of 𝑆                             Our approach allows for a tradeoff between space and query time
+using sketches Φ1..𝑅 , and MarkSeed(𝑠 ∗, Φ1..𝑅 ), which adjusts the                        in Marginal(): a smaller 𝜌 (fewer centers) means less space but a
+sketches Φ1..𝑅 when 𝑠 ∗ is selected as a seed.                                             higher evaluation cost, as it may take longer to find a center. PaC-IM
+Sketch Construction (Sketch(𝐺, 𝑟 )). Recall that we maintain                               unifies and is a hybrid of StaticGreedy and InfuserMG. Theoretically,
+CC information for 𝜌 = 𝛼𝑛 centers 𝐶 = {𝑐 1, 𝑐 2, . . . , 𝑐 𝜌 } in sketches.                using 𝛼 = 1, our sketch is equivalent to InfuserMG where the CC
+To construct a sketch Φ𝑟 , we first compute the CC information of                          information for all vertices on all sketches are memoized; using 𝛼 =
+the sampled graph 𝐺𝑟′ , which can be performed by any parallel                             0, our sketch is equivalent to StaticGreedy with no memoization, and
+connectivity algorithm [26]. We store the CC information for all                           evaluations are done by traversing the sampled graph. In practice,
+centers in two arrays. Φ𝑟 .label[𝑖] records the label of CC of the                         PaC-IM is much faster than StaticGreedy and InfuserMG even when
+𝑖-th center. For multiple centers in the same CC, we simply use the                        with no compression due to better parallelism. We summarize the
+smallest CC id as the label for all of them to represent this CC, so                       theoretical guarantees in Tab. 2, and state them in Thm. 3.1. We
+all centers find the CC information by referring to their label. For a                     give the proof in the full version of this paper.
+center 𝑐𝑖 , If 𝑖 is the label of its CC, we use Φ𝑟 .size[𝑖] to record the
+                                                                                              Theorem 3.1. PaC-IM with parameter 𝛼 requires 𝑂 ((1 + 𝛼𝑅)𝑛)
+size of this CC. An example of these arrays is given in Fig. 2.
+                                                                                           space to maintain 𝑅 sketches, and visits 𝑂 (𝑅 · min(1/𝛼,𝑇 )) vertices to
+Computing the Marginal Gain (Marginal(𝑆, 𝑣, Φ1..𝑅 )). Given                                re-evaluate the marginal gain of one vertex 𝑣, where 𝑇 is the average
+the sketches Φ1..𝑅 and the current seed set 𝑆, the function Mar-                           CC size of 𝑣 on all sketches.
+ginal(𝑆, 𝑣, Φ1..𝑅 ) computes the marginal gain of a vertex 𝑣 by av-
+eraging the marginal gains of 𝑣 on all sketches. We use a helper                           4     PARALLEL SEED SELECTION
+function ⟨𝛿, 𝑙⟩ = GetCenter(Φ𝑟 , 𝑣, 𝑆), which returns 𝛿 as the mar-
+                                                                                           We now present the parallel seed selection process in PaC-IM. We
+ginal gain of 𝑣 on sketch Φ𝑟 , and 𝑙 as the label of centers connected
+                                                                                           call each iteration in seed selection (selecting one seed) a round.
+to 𝑣 (𝑙 = −1 if no center is connected to 𝑣). This function will run a
+                                                                                           Recall that prior solutions use the CELF optimization (see Tab. 2
+breadth-first search (BFS) from 𝑣 on 𝐺𝑟′ (i.e., only using edges 𝑒 ∈ 𝐸
+                                                                                           and Sec. 2), which maintains (possibly stale) scores of all vertices in a
+s.t. Sample(𝑒, 𝑟 ) is true). If any center is encountered during this
+                                                                                           priority queue 𝑄 and updates them lazily. In each round, CELF pops
+BFS (Examples 1 and 3 in Fig. 2), then the influence of 𝑣 is the same
+                                                                                           the vertex with the highest (stale) score from 𝑄 and re-evaluates
+as 𝑐𝑖 on this sketch. The information of 𝑐𝑖 is retrieved by its label
+                                                                                           it. The process terminates when a newly evaluated score is higher
+𝑙 = Φ𝑟 .label[𝑖], and thus 𝛿 = Φ𝑟 .size[𝑙]. The influence 𝛿 is either the
+                                                                                           than all scores in 𝑄; otherwise, the new score will be inserted
+size of the CC containing 𝑣 when no vertices in this CC are seeds
+(Example 1 in Fig. 2), or 0 otherwise, as is updated in MarkSeed                           back into 𝑄. For simplicity, we assume no tie between scores. In
+
+
+
+
+                                                                                    404
+        Algorithm 4: Seed Selection based on P-tree                                            P-tree [10, 12, 24, 73]. We prove that using P-trees, our approach
+   Maintains : A parallel binary search tree 𝑇 for all Δ̄[𝑣 ].                                 has work (number of evaluations) asymptotically the same as CELF,
+1  Function NextSeed(𝑆, Φ1..𝑅 )                                                                while is highly parallel: the selection of the 𝑖-th seed finishes in
+ 2    𝑠∗ ← ⊥                                                   // The best seed so far         log |𝐹𝑖 | iterations of evaluations (each iteration evaluates multiple
+ 3    𝑗 ←0                                                                                     vertices in parallel), instead of |𝐹𝑖 | iterations (one vertex per iter-
+ 4    repeat                                                                                   ation) in CELF. We also propose a new data structure Win-Tree,
+          // Extract (remove & output) the top 2 𝑗 elements in 𝑇 into array 𝐵 𝑗                based on parallel winning trees. Win-Tree does not maintain the
+ 5        𝐵 𝑗 [1..2 𝑗 ] ← 𝑇 .SplitAndRemove(2 𝑗 )                                              total order of scores, and is simpler and potentially more practical
+ 6        ParallelForEach 𝑣 ∈ 𝐵 𝑗 do // Get the true score for each 𝑣 ∈ 𝐵 𝑗                    than P-trees. We introduce the P-tree-based approach in Sec. 4.1
+ 7              Δ̄[𝑣 ] ← Marginal(𝑆, 𝑣, Φ1..𝑅 )                                                and Win-Tree-based approach in Sec. 4.2, and compare their per-
+ 8        𝑡 ← arg max𝑣 ∈𝐵 𝑗 Δ̄[𝑣 ]                  // can be computed in parallel             formance in Sec. 5.3. These two approaches are independent of the
+ 9        if (𝑠 ∗ = ⊥) or (Δ̄[𝑡 ] > Δ̄[𝑠 ∗ ]) then 𝑠 ∗ ← 𝑡                                     sketching algorithm and apply to seed selection on all submodular
+10         𝑗 ← 𝑗 +1                                                                            diffusion models (not necessarily the IC model and/or on undirected
+11    until Δ̄[𝑠 ∗ ] > 𝑇 .Max( )              // Δ̄[𝑠 ∗ ] is better than the top in 𝑇          graphs). Note that most IM diffusion models are submodular (e.g., IC,
+                                                                                               Linear Threshold (LT), Triggering (TR [42]), and more [42, 76, 85]).
+                         ⋃︁ 𝑗 −1
+12    𝑇 .BatchInsert( 𝑗 ′ =0 𝐵 𝑗 ′ \ {𝑠 ∗ } )
+13                   return 𝑠 ∗
+                                                                                               4.1    Parallel Priority Queue Based on P-tree
+                                                                                               Our first approach to parallelizing CELF is to maintain the total
+                                  LJ                CH5               GER                      (decreasing) order of the scores of all vertices, using a parallel binary
+     # evaluations
+
+
+
+
+                      5                  104                   4                               search tree (BST) called P-tree [10, 12]. We will use two functions
+                 10                                            3
+                                         103                                                   on a P-tree 𝑇 : 1) 𝑇 .SplitAndRemove(𝑘), which extracts (removes
+                                                               2
+                 10   2
+                                         102                                                   and outputs to an array) the first 𝑘 tree nodes (𝑘 largest scores)
+                                                                1                              from 𝑇 , and 2) 𝑇 .BatchInsert(𝐵), which inserts a set of keys 𝐵 to
+                          0 20 40 60 80 100    0 20 40 60 80 100 0 20 40 60 80 100
+                                                                                               𝑇 . Both algorithms are parallel with a polylogarithmic span.
+                              round                round              round
+                                                                                                   Since P-tree maintains the total order of all vertices, we can
+    Figure 3: The number of evaluations by CELF in each round. A point                         extract a batch of vertices with top (stale) scores and evaluate them
+    (𝑥, 𝑦) means that CELF does 𝑦 re-evaluations in the 𝑥-th round.                            in parallel. The key challenge is a similar stop condition as CELF
+                                                                                               to avoid evaluating too many vertices, since we are unaware of
+ the cases when ties exist, we break the tie by vertex id. Let 𝐹𝑖 =                            the number of “useful” vertices, i.e., |𝐹𝑖 |, ahead of time. Our idea
+ {𝑣 | Δ̄𝑖 −1 [𝑣] ≥ Δ∗ } be the set of vertices re-evaluated by CELF in                         is to use prefix doubling [14, 25, 35, 37, 68, 69, 78] to achieve work
+ round 𝑖, where Δ̄𝑖 −1 [𝑣] is the stale score of 𝑣 after round 𝑖 − 1, and                      efficiency and high parallelism. The pseudocode is given in Alg. 4
+ Δ∗ is the maximum true score in round 𝑖 (i.e., the score of the chosen                        with an illustration in Fig. 4. To find the next seed, the P-tree 𝑇 starts
+ seed in round 𝑖). We experimentally study the distribution of |𝐹𝑖 |                           with the stale scores Δ̄[·] from the previous round. We then extract
+ on all graphs and show three representative graphs in Fig. 3. Except                          the top (largest stale score) nodes in batches of size 1, 2, 4, 8, ...
+ for road networks (e.g., GER in Fig. 3), most graphs may require a                            from 𝑇 (Line 5). Within each batch 𝐵 𝑗 , we re-evaluate all vertices in
+ large number of re-evaluations in certain rounds. However, CELF                               parallel (Line 7). These new scores are used to update the current
+ is inherently sequential. Some existing parallel implementations                              best seed 𝑠 ∗ . The loop terminates when the score of 𝑠 ∗ is better than
+ (e.g., [31, 56]) only parallelize the evaluation function Marginal                            the best score in 𝑇 (Line 11). Finally, we select 𝑠 ∗ as the seed and
+                                                                                               insert the rest of the new true scores 𝐵 𝑗 \ {𝑠 ∗ } back to 𝑇 .
+                                                                                                                                         ⋃︁
+ (Line 4 in Alg. 2), but leave the CELF process sequential, and perform
+ all |𝐹𝑖 | evaluations one by one. When 𝐹𝑖 is large (as in social and                              Due to prefix doubling, each seed selection finishes in at most
+ web networks), the sequential CELF results in low parallelism.                                𝑂 (log 𝑛) rounds. Note that our approach evaluates more vertices
+                                                                                               than CELF, but due to the stop condition (Line 11), the extra work
+ Prior Work on Parallel Priority Queue. As a fundamental data
+                                                                                               is bounded by a constant factor (proved in Thm. 4.2).
+ type, parallel priority queues are widely studied [9, 12, 27, 66, 72,
+ 73, 82]. However, as far as we know, all these algorithms/interfaces                            Theorem 4.1 (P-tree Correctness). Alg. 4 always selects the
+ require knowing the batch of operations (e.g., the threshold to                               next seed with the largest marginal gain, i.e., Δ(𝑠 ∗ ) = max𝑣 ∈𝑉 {Δ(𝑣)}.
+ extract keys or the number of keys to extract) ahead of time. This
+                                                                                                  Due to the space limit, we defer the proof to the full version.
+ is not true in CELF—the set 𝐹𝑖 is only known during the execution.
+ Thus, we need different approaches to tackle this challenge.                                     Theorem 4.2 (P-tree Efficiency). Alg. 4 has the total number
+ Overview of Our Approaches. We first formalize the interface                                  of evaluations at most twice that of CELF.
+ of the parallel priority queue needed in Alg. 1. The data structure                           Proof. Recall that 𝐹𝑖 is the set of evaluated vertices by CELF when
+ maintains an array Δ̄[·] of (stale) scores for all vertices. It is allowed                    selecting the 𝑖-th seed. Let 𝐹𝑖′ be the set of evaluated vertices by
+ to call Marginal function to re-evaluate and obtain the true score                            P-trees in Alg. 4. We first show a simple case—if both CELF and
+ of any vertex. The interface needs to support NextSeed function,                              Alg. 4 start with the same stale scores Δ̄𝑖 −1 [·], then |𝐹𝑖′ | ≤ 2|𝐹𝑖 |.
+ which returns the vertex id with the highest true score.                                      Let us reorder vertices in 𝑉 as 𝑣 1, 𝑣 2, . . . , 𝑣𝑛 by the decreasing order
+     We present two parallel data structures to maintain the scores.                           of their stale score Δ̄𝑖 −1 [·]. Assume 𝑣𝑙 is the last vertex evaluated
+ The first one is based on a parallel binary search tree (BST) called                          by CELF, so |𝐹𝑖 | = 𝑙. 𝑣𝑙 must be in the last batch in P-tree. Assume
+
+
+
+
+                                                                                         405
+                  SPLITANDREMOVE                   ഥ 𝐻 = 10 < Δ∗ = 13.
+                                                   Δ
+    Batch 3                                 H        Batch 4 not needed.                         K
+    Re-evaluate 𝐷𝐸𝐹𝐺.                       10                                                   4
+    Δ∗ ← 13                     D                        L          After BATCHINSERT    G               M
+    Batch 2                     15                       3                               8               1
+    Re-evaluate 𝐵𝐶.     B             F          J               N                  H        I       A       O
+     ∗
+    Δ ← 13              20            12         5               0                  10       5       3       0
+    Batch 1         A       C       E    G     I     K      M        O           E     F   B   J   L   D   N
+    Re-evaluate 𝐴. 22      17      14    10    5     4       1       0          11     9   6   5   4   2   0
+    Δ∗ ← 3
+
+
+
+
+                                                                  BATCH-
+        𝐴 to 𝐺 are re-evaluated                               ID         A B C D E F G H I J K L M N O
+
+
+
+
+                                                                  INSERT
+                                                                                        ഥ 22 20 17 15 14 12 10 10 5
+                                                                            Stale score Δ                                                  5   4    4    1   0    0
+    Updated       C      A     B      D      E     F     G                  True score Δ 3 6 13 2 11 9 8 - -                               -   -    -    -   -    -
+     to true     13    3     6 2 10 9 8                                                                                    Re-evaluated by P-tree (𝐴 to 𝐺)
+     scores                                                                         Re-evaluated by CELF (𝐴 to 𝐸)
+                     𝐶 has the highest score. Select 𝐶 as the seed.
+Figure 4: Example of P-tree-Based Seed Selection. The letters in the tree nodes represent vertices, and the numbers below them are their stale scores.
+P-tree maintains decreasing order of the (stale) scores. By prefix-doubling, we extract batches of 1, 2, 4 vertices and evaluate each batch in parallel. After batch
+3, the highest true score (13) is higher than the current best in the tree (10), and the algorithm stops. We will select the node with the highest true score and
+insert the rest back to the tree with their new score. P-tree may evaluate more vertices than CELF, but the extra work can be bounded (Thm. 4.2).
+
+
+the last batch is batch 𝑗 with 2 𝑗 vertices. This indicates that all                             as CELF with 𝑂 (𝑛 log 𝑛 + 𝑊𝐶𝐸𝐿𝐹 ) work and 𝑂˜ (𝑘𝐷 Δ ) span, where k
+2 𝑗 − 1 vertices in the previous 𝑗 − 1 batches are before 𝑣𝑙 . Therefore                         is the number of seeds, 𝑊𝐶𝐸𝐿𝐹 is the work (time complexity) by CELF,
+2 𝑗 − 1 < 𝑙 = |𝐹𝑖 |, and |𝐹𝑖′ | = 2 𝑗+1 − 1, which proves |𝐹𝑖′ | ≤ 2|𝐹𝑖 |.                       and 𝐷 Δ is the span to evaluate one vertex.
+    We now consider the general case. We first focus on a specific
+                                                                                                   Thm. 4.3 can be proved by Thm. 4.2 and the cost bound of P-trees.
+seed selection round 𝑖. Due to different sets of vertices evaluated
+                                                                                                 For the page limit, we present the proof in the full version.
+in each round, at the beginning of round 𝑖, CELF and P-tree may
+not see exactly the same stale scores. We denote the stale score at
+                                                                                                 4.2    Parallel Priority Queue: Win-Tree
+the beginning of round 𝑖 in CELF as Δ̄𝐶𝐸𝐿𝐹 [·] and that for P-tree as
+Δ̄𝐵𝑆𝑇 [·]. We reorder vertices by the decreasing order of Δ̄𝐶𝐸𝐿𝐹 [·]                             While P-tree provides theoretical efficiency for seed selection, it
+as 𝑣 1, 𝑣 2, . . . , 𝑣𝑛 , and similarly for Δ̄𝐵𝑆𝑇 [·] as 𝑢 1, 𝑢 2, . . . , 𝑢𝑛 . Denote           maintains the total order of all vertices, which is not needed in
+Δ∗ as the highest true score in round 𝑖. Let 𝑣 𝑥𝑖 be the last vertex                             priority queues and may cause performance overhead. Also, P-tree
+in 𝑣 1..𝑛 such that Δ̄𝐶𝐸𝐿𝐹 [𝑣 𝑥𝑖 ] ≥ Δ∗ , and 𝑢 𝑦𝑖 the last vertex in 𝑢 1..𝑛                     explicitly maintains the parent-child pointers, which causes addi-
+such that Δ̄𝐵𝑆𝑇 [𝑢 𝑦𝑖 ] ≥ Δ∗ . Namely, 𝑥𝑖 is the rank of Δ∗ in 𝑣 1..𝑛 ,                          tional space usage. We now propose a more practical data structure
+and 𝑦𝑖 is the rank of Δ∗ in 𝑢 1..𝑛 . By definition, 𝐹𝑖 is exactly the first                      based on a winning tree that overcomes these two challenges, al-
+𝑥𝑖 vertices in sequence 𝑣, and thus 𝑥𝑖 = |𝐹𝑖 |; 𝐹𝑖′ contains all vertices                        though it does not have the same bounds as in Thm. 4.3.
+smaller than 𝑢 𝑦𝑖 and possibly some more in the same batch with                                     A classic winning tree (aka. tournament tree) is a complete binary
+𝑢 𝑦𝑖 , so |𝐹𝑖′ | ≤ 2𝑦𝑖 . In the simple case discussed above, where we                            tree with 𝑛 leaf nodes and 𝑛 − 1 interior nodes. The data are stored
+assume Δ̄𝐶𝐸𝐿𝐹 [·] = Δ̄𝐵𝑆𝑇 [·], we always have 𝑥𝑖 = 𝑦𝑖 .                                          in the leaves. Each interior node records the larger key of its two
+    We will use amortized analysis to show that 𝑦𝑖 ≤ 𝑥𝑖 , which
+                                                                ∑︁       ∑︁                      children. Since a winning tree is a complete binary tree, it can be
+further indicates |𝐹𝑖 | ≤ 2 · |𝐹𝑖 |. We can partition 𝑢 1..𝑦𝑖 into two
+                           ∑︁ ′          ∑︁                                                      stored implicitly in an array 𝑇 [1..2𝑛 − 1], which consumes smaller
+categories: 𝑈 1 as the intersection of 𝑢 1..𝑦𝑖 and 𝑣 1..𝑥𝑖 , and 𝑈 2 as the                      space. In our case, each tree node stores a vertex id (noted as 𝑡 .𝑖𝑑).
+rest. Note that for 𝑡 ∈ 𝑈 2 , Δ̄𝐵𝑆𝑇 [𝑡] ≥ Δ∗ > Δ̄𝐶𝐸𝐿𝐹 [𝑡]. This happens                          The key of a node 𝑡 is the (stale) score of this vertex, i.e., Δ̄[𝑡 .𝑖𝑑].
+iff. 𝑡 is evaluated by CELF in a previous round but not by P-tree.                               Each interior node stores the id of its children with a larger score.
+                                                                   ⋃︁ −1 ′                       As a result, the vertex at the root has the highest (stale) score.
+Namely, there exists a round 𝑗, s.t. 𝑡 ∈ 𝐹 𝑗 but 𝑡 ∉ 𝑖𝑥=𝑗                𝐹𝑥 . Let 𝑣 1..𝑛
+                                                                                    ∗
+                                                                                                    To support CELF efficiently, we use the internal nodes of Win-
+and 𝑢 1..𝑛 be the 𝑢 and 𝑣 sequences in round 𝑗, respectively. Note
+        ∗
+                                                                                                 Tree to prune the search process. Suppose the best true score evalu-
+that 𝐹 𝑗 = 𝑣 1..𝑥 ∗      , and 𝑢 1..𝑦
+                                 ∗       ⊆ 𝐹 𝑗′ . Since 𝑡 ∈ 𝐹 𝑗 , then vertex 𝑡 was
+                       𝑗              𝑗                                                          ated so far is Δ∗ , then if we see a subtree root 𝑡 with a stale score
+counted in 𝑥 𝑗 . Since 𝑡 ∉ 𝐹 𝑗 , 𝑡 is not counted in any 𝑦 𝑗 . Therefore,
+                                       ′
+                                                                                                 smaller than Δ∗ , we can skip the entire subtree. This is because all
+we can save a token for such 𝑡 when it is evaluated by CELF in                                   nodes in this subtree must have smaller stale scores than 𝑡 .𝑖𝑑, which
+round 𝑗 but not by P-tree, such that when later 𝑡 is counted in 𝑢 1..𝑦𝑖                          indicates even smaller true scores. Although this idea is simple, we
+in round 𝑖, we will use the token to count 𝑡 for free. Note that                                 must also carefully maintain the Win-Tree structure, with the newly
+𝑡 ∉ (𝐹 𝑗′ ∪ 𝐹 𝑗+1′ ∪ ... ∪ 𝐹 ′ ), for the same reason, 𝑡 is not counted in
+                                𝑖 −1                                                             evaluated true scores. We presented our algorithm in Alg. 5 with
+any 𝑦 𝑗 ′ for 𝑗 ≤ 𝑗 ′ < 𝑖, so the token must still be available in round 𝑖.                      an illustration in Fig. 5, and elaborate on more details below.
+In summary, all vertices in 𝑈 1 are counted in 𝑥𝑖 , and all vertices in                             For NextSeed, we keep a global variable Δ∗ as the largest true
+𝑈 2 can be counted by the saved tokens (charged to some previous                                 score obtained so far, initialized to 0. The algorithm calls the Find-
+𝑥 𝑗 ). Therefore, using amortized analysis, we have 𝑦𝑖 ≤ 𝑥𝑖 .                                    Max(𝑡, . . . ) routine starting from the root, which explores the sub-
+                                                                     ∑︁       ∑︁
+     Recall that 𝑥𝑖 = |𝐹𝑖 |, and |𝐹𝑖 | ≤ 2𝑦𝑖 . Since 𝑦𝑖 ≤ 𝑥𝑖 , we
+                                              ′
+                                                                                                 tree rooted at 𝑡. We first check if the score at 𝑡 is stale: if 𝑡’s id is
+                                                                   ∑︁        ∑︁
+proved that |𝐹𝑖′ | ≤ 2𝑦𝑖 ≤ 2 𝑥𝑖 = 2 |𝐹𝑖 |.                                                       the same as its parent, the true score has been re-evaluated at its
+                    ∑︁         ∑︁           ∑︁          ∑︁
+                                                                                       □
+                                                                                                 parent (Line 2). Based on the node’s status, we discuss three cases.
+  Theorem 4.3 (P-tree Cost Bound). Given the same sketches
+                                                                                                 First, if the score is stale and is lower than Δ∗ , as discussed above,
+Φ1..𝑅 , our seed selection based on P-tree will select the same seed set
+
+
+
+
+                                                                                           406
+         B : subtree skipped * : Re-evaluation happens                          : tree path visited                       E : Internal tree nodes updated after re-evaluations
+                                                                                                                                                  Tree root has the highest true score
+        Δ 𝐹 is stale. Re-evaluate. Δ 𝐹   ← 8, Δ∗ ← 8                                                                    ! values
+                                                                                          Update the tree using the new 𝚫
+                                                           F*                                                                                     D    D will be selected as seed
+         Δ 𝐷 is stale. Re-evaluate.
+                                                                                                Δ 𝐺 is stale.
+           Δ 𝐷 ← 14, Δ∗ ← 14                      Δ 𝐷 and Δ 𝐹 are new.
+                                         D*       No need to re-evaluate.        F            Δ 𝐺 =13 < Δ∗ =14.                   D                                 G
+           Δ 𝐵 is stale.                                                                        Skip subtree.
+       but Δ 𝐵 =12<Δ∗ =14,
+           Skip subtree.      B                   D                  F                    G                               B               D               E                  G
+
+         Vertex id       A        B           C        D        E*          F        G          H         Vertex id   A       B       C       D       E        F        G         H
+       Stale score 𝚫     4        12          916      15      20    13      3     Stale score 𝚫    4       12      9      16 14 15 10 20 8         13    3
+       Re-evaluated                            14      10       8                  True score 𝚫                             14      10      8
+                         (a) The process of NextSeed()                                                                                     !
+                                                                                                      (b) The updated tree with the new 𝚫 values
+ Figure 5: Seed selection based on Win-Tree. Each leaf stores a vertex id, and each internal node stores the vertex in its subtree with the highest (stale) score.
+ (a) An example of finding the maximum score. For illustration purposes, we assume the parallel threads work at the same speed and all tree nodes on the same
+ level are processed in parallel (in reality the threads run asynchronously in fork-join parallelism). Therefore, the subtree at 𝐺 will see Δ∗ = 14 updated by 𝐷,
+ and this subtree will be skipped. (b) Updating the internal nodes with the new Δ̄[ · ] values. Finally, the root of the tree has the highest true score.
+
+
+   Algorithm 5: Seed Selection based on Win-Tree                                                            Theorem 4.4 (Win-Tree Correctness). Alg. 5 always selects the
+   Maintains: Global variable Δ∗ : the highest true score evaluated so far                                next seed with the largest marginal gain.
+      A winning tree 𝑇 with 𝑛 leaf nodes each storing a record.                                              We present the proof in the full version of this paper. Unlike
+      For a tree node 𝑡 ∈ 𝑇 , we use the following notations:
+                                                                                                          P-trees, we cannot prove strong bounds for the number of re-
+      𝑡 .𝑖𝑑: the id of the vertex stored in this node
+      𝑡 .parent / 𝑡 .left / 𝑡 .right : the parent/left child/right child of node 𝑡
+                                                                                                          evaluations in Win-Tree—since the parallel threads are highly asyn-
+      The Win-Tree is a max-priority-queue based on (stale) score Δ̄[𝑡 .𝑖𝑑 ]                              chronous, the progress of updating Δ∗ and pruning the search
+      for each vertex.                                                                                    cannot be guaranteed. However, we expect Win-Tree to be more
+ 1 Function FindMax(tree node 𝑡 , current seed set 𝑆, sketches Φ1..𝑅 )                                    practical than P-tree for a few reasons. First, Win-Tree is a complete
+ 2    if 𝑡 .𝑖𝑑 = 𝑡 .parent.𝑖𝑑 then stale ← false             // evaluated by parent                       binary and can be maintained in an array, which requires smaller
+ 3    else stale ← true                                                                                   space (no need to store metadata such as pointers in P-trees). Second,
+      // Skip a subtree if the max is stale and is smaller than the current best                          the P-tree algorithm requires 𝑂 (log 𝑛) batches and synchronizing
+          score; no re-evaluation needed for the entire subtree                                           all threads between batches. Such synchronization may result in
+ 4    if stale = true and Δ̄[𝑡 .𝑖𝑑 ] < Δ∗ then return                                                     scheduling overhead, while the Win-Tree algorithm is highly asyn-
+ 5    if stale = true then           // Current value is stale, re-evaluation needed                      chronous. Most importantly, Win-Tree does not maintain the total
+ 6          Δ̄[𝑡 .𝑖𝑑 ] ← MarginalGain(𝑆, 𝑡 .𝑖𝑑, Φ1..𝑅 )               // Re-evaluate                      order, and the construction time is 𝑂 (𝑛) instead of 𝑂 (𝑛 log 𝑛). In
+ 7          WriteMax(Δ∗ , Δ̄[𝑡 .𝑖𝑑 ])                  // update the best score so far                    Sec. 5.3, we experimentally verify that although Win-Tree incurs
+ 8    if 𝑡 is a leaf then return                                                                          more re-evaluations than P-trees, it is faster in most tests.
+ 9    In Parallel:
+10          FindMax(𝑡 .left, 𝑆, Φ1..𝑅 )                                                                   5       EXPERIMENTS
+            FindMax(𝑡 .right, 𝑆, Φ1..𝑅 )
+                                                                                                          Setup. We implemented PaC-IM in C++. We run our experiments
+11
+      // compare two branches and reset max
+                                                                                                          on a 96-core (192 hyperthreads) machine with four Intel Xeon Gold
+      if Δ̄[𝑡 .left.𝑖𝑑 ] > Δ̄[𝑡 .right.𝑖𝑑 ] then 𝑡 .𝑖𝑑 ← 𝑡 .left.𝑖𝑑
+                                                                                                          6252 CPUs and 1.5 TB of main memory. We use numactl -i all
+12
+      else 𝑡 .𝑖𝑑 ← 𝑡 .right.𝑖𝑑
+                                                                                                          in experiments with more than one thread to spread the memory
+13
+14 Function NextSeed(𝑆, Φ1..𝑅 )
+15    Δ∗ ← 0
+                                                                                                          pages across CPUs in a round-robin fashion. We run each test four
+16    FindMax(𝑇 .root, 𝑆, Φ1..𝑅 )
+                                                                                                          times and report the average of the last three runs.
+17    return 𝑇 .root.𝑖𝑑
+                                                                                                             We tested 17 graphs with information shown in Tab. 3. We in-
+                                                                                                          clude real-world graphs with a wide range of sizes and distributions,
+                                                                                                          including five billion-scale or larger graphs. In addition to the
+ we can skip the entire subtree and terminate the function (Line 4).                                      commonly used benchmarks of social networks, we also include
+ Second, if the score is stale but is higher than Δ∗ , we have to re-                                     web graphs, road networks, and 𝑘-NN graphs (each vertex is a multi-
+ evaluate the vertex 𝑡 .𝑖𝑑, since it may be a candidate for the seed                                      dimensional data point connecting to its 𝑘-nearest neighbors [81]).
+ (Line 6). We then use the atomic operation WriteMax to update                                            Solving IM on such graphs simulates the influence spread between
+ Δ∗ by this true score if it is better. The third case is when the score                                  websites (web graphs), geologically connected objects (road net-
+ is not stale. Although no evaluation is needed on 𝑡 .𝑖𝑑, we should                                       works), and geometrically close objects (𝑘-NN graphs). Based on
+ still explore the subtrees, since with the newly evaluated score, the                                    graph patterns, we call social and web graphs scale-free graphs,
+ subtree structure (i.e., the ids of the internal nodes) may change.                                      and the rest sparse graphs. We symmetrize the directed graphs
+ Hence, in cases 2 and 3, we recursively explore the two subtrees in                                      to make them undirected. PaC-IM (with compression) is the only
+ parallel (Lines 9 to 11). After the recursive calls, we set the vertex                                   tested system that can process the largest graph ClueWeb [54] with
+ id as one of its two children with a higher score (Lines 12 to 13).                                      978M vertices and 74B edges. Even with 1.5TB memory, PaC-IM
+                                                                                                          can process Clueweb only when 𝛼 ≤ 0.25 (4× or more compression
+                                                                                                          ratio in sketches), which shows the necessity of compression.
+
+
+
+
+                                                                                                    407
+Table 3: Graph Information. Influence: the maximum influence spread of               solution quality increases with larger 𝑅 or smaller 𝜖. When com-
+100 seeds selected by PaC-IM (𝑅 = 256), InfuserMG (𝑅 = 256), and Ripples             paring running time, we guarantee that PaC-IM always gives a
+(𝜖 = 0.5), rounded to integers. Most influence values are evaluated by 20000         better solution than the baselines. For InfuserMG and PaC-IM, we
+simulations. The underline numbers on large graphs use 2000 simulations.
+                                                                                     set the number of sketches 𝑅 = 256. PaC-IM with 𝑅 = 256 is on
+“-”: unable to evaluate within 50 hours using 2000 simulations.
+                                                                                     average more than 99% of the quality when using 𝑅 = 215 , which is
+                   |𝑉 |     |𝐸 |    Influence              Notes                     consistent with the observation in the StaticGreedy paper [21] (see
+              EP     0.08M   0.81M        5332   Epinions1 [64]                      our full version for quality analysis). For Ripples, smaller 𝜖 means
+              SLDT   0.08M   0.94M        6342   Slashdot [50]                       better accuracy but more time. We tested 𝜖 in [0.13, 0.5] as in their
+              DBLP   0.32M   2.10M        1057   DBLP [84]                           paper. PaC-IM under 𝑅 = 256 yields about the same solution quality
+              YT     1.14M   5.98M       29614   com-Youtube [84]                    as 𝜖 = 0.13 (the best tested setting in their paper). When reporting
+   Social
+
+
+
+
+                     3.07M   234M      1460000   com-orkut [84]
+              OK
+                                                                                     time, we use 𝜖 = 0.5, which gives the fastest running time, and the
+              LJ     4.85M   85.7M      376701   soc-LiveJournal1 [5]
+                                                                                     quality is still reasonably high (at least 93% of our best influence).
+              TW     41.7M    2.40B   11776629   Twitter [47]
+              FT     65.6M    3.61B   19198744   Friendster [84]                        We observe that on sparse graphs, the influence spread of In-
+                                                                                     fuserMG is only 38–92% of the best achieved by PaC-IM and Ripples.
+                     89.2M   3.88B    15559737   sd_arc [54]                         Although theoretically, PaC-IM and InfuserMG should give the same
+   Road Web
+
+
+
+
+              SD
+              CW     978M    74.7B           -   ClueWeb [54]
+                                                                                     output, InfuserMG uses many optimizations that sacrifice solution
+              GER    12.3M   32.3M         384   Germany [1]                         quality. We tried to increase 𝑅 and various other attempts in In-
+              USA    23.9M   57.7M         370   RoadUSA [1]                         fuserMG, but they did not improve the solution quality. Therefore,
+              HT5    2.05M   13.0M       1018    HT [28, 81], 𝑘=5                    we keep the same value 𝑅 = 256 for PaC-IM and InfuserMG.
+              HH5    2.05M   13.0M       2827    Household [28, 81], 𝑘=5
+   k-NN
+
+
+
+
+              CH5    4.21M   29.7M     355065    CHEM [30, 81], 𝑘=5                  5.1    Overall Time and Space
+              GL5    24.9M   157M       11632    GeoLife [81, 86], 𝑘=5               Tab. 4 shows the running time, memory usage, and normalized
+              COS5   321M     1.96B      4753    Cosmo50 [48, 81], 𝑘=5
+                                                                                     influence spread of all systems. Ours1 and Ours0.1 are PaC-IM with
+                                                                                     𝛼 = 1 (no compression) and 𝛼 = 0.1 (10× sketch compression),
+   We select 𝑘 = 100 seeds in all tests. We use the IC model with                    respectively. To illustrate the relative performance, we present a
+constant propagation probability 𝑝 in the same graph. For scale-free                 heatmap in Fig. 1, where all the numbers (time and space) are
+networks, we use 𝑝 = 0.02, similar to previous work [20, 22, 31, 43].                normalized to Ours1 . Ours0.1 is the only algorithm that can process
+For sparse graphs, we set 𝑝 = 0.2 since the average vertex degrees                   the largest graph CW [54]. With similar quality, Ours1 is faster than
+are mostly within 5. We also tested two other edge probability                       all baselines on all graphs, and Ours0.1 is just slower than InfuserMG
+distributions similar to previous papers [31, 56]. Among different                   on the two smallest graphs. Ours0.1 has the smallest space usage on
+distributions, we observed similar relative performance among the                    all graphs. The advantage of PaC-IM is more significant on larger
+tested algorithms. Thus, we provide the result using fixed 𝑝 = 0.02                  graphs, both in time and space.
+or 0.2 here. Full results on other distributions can be found in the                 Running Time. PaC-IM is significantly faster than the baselines on
+full version [77]. When comparing the average numbers across                         almost all graphs. On average, Ours1 is 5.7× faster than InfuserMG
+multiple graphs, we use the geometric mean.                                          and 18× faster than Ripples. Ours0.1 is slightly slower than Ours1 ,
+Software Libraries. We use ParlayLib [11] for fork-join parallelism                  but is still 3.2× faster than InfuserMG and 10× faster than Ripples.
+and some parallel primitives (e.g., sorting). We use the P-tree imple-                   In general, the compression in PaC-IM saves space by trading
+mentation from the PAM library [71, 73], and the UniteRemCAS                         off more time. When 𝛼 = 1, the CC sizes for all vertices are stored
+implementation from ConnectIt [26] for parallel connectivity.                        in the sketches, and a re-evaluation only needs a constant time
+Tested Algorithms. We tested both P-tree and Win-Tree for seed                       per sketch. When 𝛼 = 0.1, each query involves a search to either
+selection. In most cases, Win-Tree is more efficient in both time and                find a center, or visit all connected vertices, which roughly costs
+space, so use Win-Tree as the default option in PaC-IM. We present                   𝑂 (1/𝛼) on each sketch. Indeed, on all scale-free graphs, Ours0.1
+more results comparing the two options in Sec. 5.3.                                  takes a longer time than Ours1 . Interestingly, on most sparse graphs,
+   We compare with three existing parallel IM systems: InfuserMG [31],               Ours0.1 can be faster than Ours1 . This is because seed selection
+No-Singles [63] and Ripples [55, 56], and call them baselines. As in-                only takes a small fraction of the total running time (except for
+troduced in Sec. 2, InfuserMG uses a similar sketch-based approach                   CH5), so the slow-down in seed selection is negligible for the overall
+as PaC-IM but does not support compression or parallel CELF. No-                     performance. Meanwhile, avoiding storing 𝑂 (𝑅𝑛) connectivity sizes
+Singles and Ripples both use Reverse Influence Sampling [16]. In                     reduces memory footprint and makes the sketching step slightly
+our tests, Ripples is always better than No-Singles in time and space,               faster, which overall speeds up the running time.
+so we only report the results of Ripples. We have also tested some                   Memory Usage. We show space usage of PaC-IM and baselines
+sequential algorithms, such as PMC [59] and IMM [74], but their                      in Fig. 1 and 7 and Tab. 4. We also show the size of representing
+running times are not competitive to the parallel implementations.                   the graph in standard Compressed Sparse Row (CSR) format as a
+We observe that InfuserMG and Ripples have scalability issues when                   reference in Tab. 4 and Fig. 7, which roughly indicates the space
+the number of threads increases (see examples in Fig. 6). Hence, we                  to store the input graph. CSR uses 8 bytes for each vertex and
+report their shortest time among all the tested numbers of threads.                  each edge. Using 𝛼 = 0.1, PaC-IM uses the least memory on all
+   Each algorithm has a parameter that controls the solution qual-
+ity: 𝑅 for InfuserMG and PaC-IM and 𝜖 ∈ (0, 0.5] for Ripples. The
+
+
+
+
+                                                                               408
+Table 4: Running time, memory usage, and influence spread (normalized to the maximum) of all tested systems on a machine with 96 cores
+(192 hyperthreads). Relative influence is the influence spread normalized to the maximum influence spread among Ours (𝑅 = 256), InfuserMG (𝑅 = 256),
+and Ripples (𝜖 = 0.5). “-”: out of memory (1.5 TB) or time limit (3 hours). Ours1 is our implementation with Win-Tree without compression. Ours0.1 is our
+implementation with 𝛼 = 0.1 (10× compression for sketches). InfuserMG [31] and Ripples [55, 56] are baselines. We report the best time of InfuserMG and
+Ripples by varied core counts (the scalability issue of InfuserMG and Ripples are shown in Fig. 6). CSR is the memory used to store the graph in CSR format
+(see more in Sec. 5.1). The bold numbers are the fastest time/smallest memory among all implementations on each graph. The underlined numbers in memory
+usage are the smallest memory among systems that do not use compression (Ours1 , Ripples and InfuserMG). A heatmap of the full result is in Fig. 1.
+                             Relative Influence         Total Running Time (second)                            Memory Usage (GB)
+                         Ours InfuserMG Ripples      Ours1 Ours0.1 InfuserMG Ripples               CSR    Ours1 Ours0.1 InfuserMG           Ripples
+                  EP     100%     99.9%      98.9%     0.29        0.49           0.38      3.70   0.01     0.14       0.06          0.17       0.21
+                  SLDT   100%     99.8%      99.1%     0.30        0.53           0.48      6.88   0.01     0.15       0.05          0.17       0.24
+                  DBLP   100%     99.0%      98.3%     0.35        0.37           0.86      2.71   0.02     0.48       0.10          0.67       0.29
+                  YT     100%     99.9%      98.2%     1.22        2.44           6.20      26.6   0.05     1.63       0.28          2.36       1.50
+       Social
+
+
+
+
+                  OK     100%     100%       99.8%     8.79        39.6           80.3      325    1.77     6.13       2.44          8.07       78.3
+                  LJ     100%     99.9%      99.4%     6.00        20.5           61.3      130    0.68     5.98       1.63          10.5       20.4
+                  TW     100%     100%           -     93.4        378            639      5863    18.2     63.0       25.9          103        718
+                  FT     100%     100%           -     128         609           1973          -   27.4     97.9       39.9          161           -
+                         100%     97.1%          -                 627           1684          -   29.6      125                     211           -
+       Road Web
+
+
+
+
+                  SD                                    150                                                            44.8
+                  CW     100%         -          -        -       9776              -          -   564         -        738            -           -
+                  GER    100%     70.4%      94.4%      9.35      8.53           26.7       392    0.33     13.3       2.58          25.1       22.8
+                  USA    100%     74.7%      92.8%      14.6      13.7           53.1      8534    0.61     25.8       5.05          49.0       46.1
+                  HT5    100%     85.7%      94.8%     0.72       0.68            2.73      9.26   0.11     1.37       0.24          1.93       0.79
+                  HH5    100%     79.5%      97.6%     2.28       2.11            8.26      14.4   0.11     3.00       0.51          4.26       1.14
+       𝑘-NN
+
+
+
+
+                  CH5    100%     92.3%      97.8%     3.52       5.32            124       10.2   0.25     4.87       1.05          8.77       1.64
+                  GL5    100%     76.9%      98.9%     19.5       17.9            116       232    1.36     27.6       6.02          51.6       8.18
+                  COS5   100%     37.7%          -      348       284            2319          -   17.0     355        66.1          666           -
+
+
+graphs. Even without compression, our algorithm uses less memory                  one. For both baselines, a single evaluation does not cause much
+than the baselines on 10 out of 16 graphs. Note that although the                 computation. In this case, the overhead of scheduling the parallel
+compression rate for sketches is 10× in Ours0.1 , the total space also            threads can be more expensive than the computation (and can even
+includes the input graph and the data structure for seed selection.               dominate the cost), which increases with the number of threads.
+Therefore, we cannot directly achieve a 10× improvement in space.                     The scalability curves indicate a major performance gain of PaC-
+In most cases, the total memory usage is about 5× smaller.                        IM over baselines is from better scalability. On SLDT, LJ, and SD,
+Summary. Overall, PaC-IM has better performance than the base-                    although the sequential running time of InfuserMG is better than
+lines in both time and space. We note that the space usage of Ripples             PaC-IM, PaC-IM achieves better performance when more than 8
+can be (up to 3.4×) better than Ours1 on certain graphs (but still                cores are used. The advantage is more significant with more cores.
+worse than Ours0.1 ), but in these cases the running time is also                     The scalability curves also indicate the necessity of our paral-
+much longer (by 2× to 583× ). On scale-free graphs, Ours0.1 is 2.5×               lel CELF. For Ours0.1 , the sequential selection time takes a large
+slower than Ours1 on average, but uses 3× less space. On sparse                   portion of the total running time, so parallelizing seed selection is
+graphs, Ours0.1 is almost always better in both time and space.                   crucial for improving the overall performance. Even for Ours1 , the
+                                                                                  selection time on 1 core is still much longer than the total parallel
+5.2       Scalability                                                             running time. This means that if this step was not well-parallelized,
+We study the scalability of all systems. We present the performance               it would become the performance bottleneck when 𝑃 is large. Using
+on six representative graphs in Fig. 6 with varying core counts 𝑃.                our new techniques from Sec. 3 and 4, both steps scale well.
+We separate the time for sketch construction (the “sketch time”)
+and seed selection (the “selection time”) to study the two compo-
+                                                                                  5.3    Analysis of the Proposed Techniques
+nents independently. For PaC-IM, both sketch and selection time                   Compression. We evaluate the time and space usage of different
+decrease with more cores and achieve almost linear speedup. In                    compression ratios by controlling the parameter 𝛼, and present the
+contrast, InfuserMG and Ripples get the best speedup with 8–16                    results in Fig. 7. The gray dashed line represents the CSR size of each
+cores on many graphs, and perform worse with more cores. For                      graph, which is the space to store the input. Compression always
+both InfuserMG and Ripples, the sketch time scales better than the                reduces memory usage, but may affect running time differently.
+selection time. This is because both algorithms use well-parallelized             Memory usage always decreases with the value 𝛼 decreases. As
+algorithms to construct sketches. For example, InfuserMG uses a                   mentioned previously, the actual compression rate can be lower
+standard coloring [60, 70] idea for parallel connectivity. However,               than 1/𝛼, since our compression only controls the memory for
+in seed selection, the baseline algorithms can have longer running                storing sketches, and there are other space usage in the algorithm.
+times with more threads used. This is because they only use paral-
+lelism within one evaluation, and perform all evaluations one by
+
+
+
+
+                                                                           409
+                                                          SLDT                                         LJ                                  SD                                       GER                 HH5                 CH5
+                                              3                            200                                           7500                                                                    75
+                                                                                                                                                                           300
+                                                                                                                                                                                                                    100
+                                   Ours1 2                                                                               5000
+                                                                                                                                                                           200
+                                                                                                                                                                                                 50
+                                                                           100
+                                              1                                                                          2500                                                                    25                  50
+                                                                                                                                                                           100
+
+                                             10                                                                        15000                                                                     75
+Running Time (sec)
+
+
+
+
+                                                     1
+                                                     2
+                                                     4
+                                                     8
+                                                    16
+                                                    24
+                                                    48
+                                                   966
+                                                      h
+
+
+
+                                                                                   1
+                                                                                   2
+                                                                                   4
+                                                                                   8
+                                                                                  16
+                                                                                  24
+                                                                                  48
+                                                                                 966
+                                                                                    h
+
+
+
+                                                                                                                                  1
+                                                                                                                                  2
+                                                                                                                                  4
+                                                                                                                                  8
+                                                                                                                                 16
+                                                                                                                                 24
+                                                                                                                                 48
+                                                                                                                                966
+                                                                                                                                   h
+
+
+
+                                                                                                                                                                                    1
+                                                                                                                                                                                    2
+                                                                                                                                                                                    4
+                                                                                                                                                                                    8
+                                                                                                                                                                                   16
+                                                                                                                                                                                   24
+                                                                                                                                                                                   48
+                                                                                                                                                                                  966
+                                                                                                                                                                                     h
+
+
+
+                                                                                                                                                                                                        1
+                                                                                                                                                                                                        2
+                                                                                                                                                                                                        4
+                                                                                                                                                                                                        8
+                                                                                                                                                                                                       16
+                                                                                                                                                                                                       24
+                                                                                                                                                                                                       48
+                                                                                                                                                                                                      966
+                                                                                                                                                                                                         h
+
+
+
+                                                                                                                                                                                                                            1
+                                                                                                                                                                                                                            2
+                                                                                                                                                                                                                            4
+                                                                                                                                                                                                                            8
+                                                                                                                                                                                                                           16
+                                                                                                                                                                                                                           24
+                                                                                                                                                                                                                           48
+                                                                                                                                                                                                                          966
+                                                                                                                                                                                                                             h
+                                                                                                                                                                           300                                      200
+
+
+
+                                                    9
+
+
+
+
+                                                                                  9
+
+
+
+
+                                                                                                                                 9
+
+
+
+
+                                                                                                                                                                                   9
+
+
+
+
+                                                                                                                                                                                                       9
+
+
+
+
+                                                                                                                                                                                                                           9
+                                  Ours0.1 5
+                                                                           500                                         10000
+                                                                                                                                                                           200
+                                                                                                                                                                                                 50                                         Total
+                                                                           250                                                                                                                                      100
+                                                                                                                         5000                                              100                   25                                         Sketch
+                                                                                                                                                                                                                                            Construction
+                                                                           400                                         10000                                                                     20
+                                                     1
+                                                     2
+                                                     4
+                                                     8
+                                                    16
+                                                    24
+                                                    48
+                                                   966
+                                                      h
+
+
+
+                                                                                   1
+                                                                                   2
+                                                                                   4
+                                                                                   8
+                                                                                  16
+                                                                                  24
+                                                                                  48
+                                                                                 966
+                                                                                    h
+
+
+
+                                                                                                                                  1
+                                                                                                                                  2
+                                                                                                                                  4
+                                                                                                                                  8
+                                                                                                                                 16
+                                                                                                                                 24
+                                                                                                                                 48
+                                                                                                                                966
+                                                                                                                                   h
+
+
+
+                                                                                                                                                                                    1
+                                                                                                                                                                                    2
+                                                                                                                                                                                    4
+                                                                                                                                                                                    8
+                                                                                                                                                                                   16
+                                                                                                                                                                                   24
+                                                                                                                                                                                   48
+                                                                                                                                                                                  966
+                                                                                                                                                                                     h
+
+
+
+                                                                                                                                                                                                        1
+                                                                                                                                                                                                        2
+                                                                                                                                                                                                        4
+                                                                                                                                                                                                        8
+                                                                                                                                                                                                       16
+                                                                                                                                                                                                       24
+                                                                                                                                                                                                       48
+                                                                                                                                                                                                      966
+                                                                                                                                                                                                         h
+
+
+
+                                                                                                                                                                                                                            1
+                                                                                                                                                                                                                            2
+                                                                                                                                                                                                                            4
+                                                                                                                                                                                                                            8
+                                                                                                                                                                                                                           16
+                                                                                                                                                                                                                           24
+                                                                                                                                                                                                                           48
+                                                                                                                                                                                                                          966
+                                                                                                                                                                                                                             h
+                                             7.5                                                                                                                            40                                      300
+                                                                                                                                                                                                                                            Seed
+                                                    9
+
+
+
+
+                                                                                  9
+
+
+
+
+                                                                                                                                 9
+
+
+
+
+                                                                                                                                                                                   9
+
+
+
+
+                                                                                                                                                                                                       9
+
+
+
+
+                                                                                                                                                                                                                           9
+                     InfuserMG5.0                                          200                                           5000                                                                    10
+                                                                                                                                                                                                                    200
+                                                                                                                                                                                                                                            Selection
+                                                                                                                                                                            20
+                                             2.5                                                                                                                                                                    100
+
+                                                                                                                                                                                                 75                  40
+                                                                          3000
+                                                     1
+                                                     2
+                                                     4
+                                                     8
+                                                    16
+                                                    24
+                                                    48
+                                                   966
+                                                      h
+
+
+
+                                                                                   1
+                                                                                   2
+                                                                                   4
+                                                                                   8
+                                                                                  16
+                                                                                  24
+                                                                                  48
+                                                                                 966
+                                                                                    h
+
+
+
+                                                                                                                                  1
+                                                                                                                                  2
+                                                                                                                                  4
+                                                                                                                                  8
+                                                                                                                                 16
+                                                                                                                                 24
+                                                                                                                                 48
+                                                                                                                                966
+                                                                                                                                   h
+
+
+
+                                                                                                                                                                                    1
+                                                                                                                                                                                    2
+                                                                                                                                                                                    4
+                                                                                                                                                                                    8
+                                                                                                                                                                                   16
+                                                                                                                                                                                   24
+                                                                                                                                                                                   48
+                                                                                                                                                                                  966
+                                                                                                                                                                                     h
+
+
+
+                                                                                                                                                                                                        1
+                                                                                                                                                                                                        2
+                                                                                                                                                                                                        4
+                                                                                                                                                                                                        8
+                                                                                                                                                                                                       16
+                                                                                                                                                                                                       24
+                                                                                                                                                                                                       48
+                                                                                                                                                                                                      966
+                                                                                                                                                                                                         h
+
+
+
+                                                                                                                                                                                                                            1
+                                                                                                                                                                                                                            2
+                                                                                                                                                                                                                            4
+                                                                                                                                                                                                                            8
+                                                                                                                                                                                                                           16
+                                                                                                                                                                                                                           24
+                                                                                                                                                                                                                           48
+                                                                                                                                                                                                                          966
+                                                                                                                                                                                                                             h
+                                                                                                                                                                          10000
+                                                    9
+
+
+
+
+                                                                                  9
+
+
+
+
+                                                                                                                                 9
+
+
+
+
+                                                                                                                                                                                   9
+
+
+
+
+                                                                                                                                                                                                       9
+
+
+
+
+                                                                                                                                                                                                                           9
+                                             20                                                                                                                                                  50
+                                                                          2000
+                                 Ripples                                                                                                                                  5000
+                                                                                                                                                                                                                     20
+                                             10                           1000                                                    Time Out                                                       25
+                                                     1
+                                                     2
+                                                     4
+                                                     8
+                                                    16
+                                                    24
+                                                    48
+                                                   966
+                                                      h
+
+
+
+                                                                                   1
+                                                                                   2
+                                                                                   4
+                                                                                   8
+                                                                                  16
+                                                                                  24
+                                                                                  48
+                                                                                 966
+                                                                                    h
+
+
+
+
+                                                                                                                                                                                    1
+                                                                                                                                                                                    2
+                                                                                                                                                                                    4
+                                                                                                                                                                                    8
+                                                                                                                                                                                   16
+                                                                                                                                                                                   24
+                                                                                                                                                                                   48
+                                                                                                                                                                                  966
+                                                                                                                                                                                     h
+
+
+
+                                                                                                                                                                                                        1
+                                                                                                                                                                                                        2
+                                                                                                                                                                                                        4
+                                                                                                                                                                                                        8
+                                                                                                                                                                                                       16
+                                                                                                                                                                                                       24
+                                                                                                                                                                                                       48
+                                                                                                                                                                                                      966
+                                                                                                                                                                                                         h
+
+
+
+                                                                                                                                                                                                                            1
+                                                                                                                                                                                                                            2
+                                                                                                                                                                                                                            4
+                                                                                                                                                                                                                            8
+                                                                                                                                                                                                                           16
+                                                                                                                                                                                                                           24
+                                                                                                                                                                                                                           48
+                                                                                                                                                                                                                          966
+                                                                                                                                                                                                                             h
+                                                    9
+
+
+
+
+                                                                                  9
+
+
+
+
+                                                                                                                                                                                   9
+
+
+
+
+                                                                                                                                                                                                       9
+
+
+
+
+                                                                                                                                                                                                                           9
+                                                                                                                                            Number of Cores
+
+Figure 6: Running time using different core counts for different IM algorithms. In each plot, the 𝑥-axis shows core counts (96h means 96 cores with
+hyperthreading) and the 𝑦-axis is running time in seconds.
+
+
+   (a): Comparision in #Re-evaluations (b): Comparision in Selection Time                                                                                                         Roughly speaking, using 𝛼 = 0.05 can save space on graphs by up
+                                Win-Tree/CELF             P-Tree/CELF                                       P-Tree/Win-Tree                Mean                                   to 8× and shrink the space very close to the input graph size.
+                                   4
+                                                                                                                                                                                     Compression affects the running time differently for sketch con-
+                 Re-evaluations
+
+
+
+
+                                                                                      Selection Time
+
+
+
+
+                                                                                                       8
+                  Normalized
+
+
+
+
+                                                                                       Normalized
+
+
+
+
+                                                                                                       4                                                                          struction and seed selection. Smaller 𝛼 indicates longer running
+                                   2
+                                                                                                       2                                                                          time in seed selection, but may improve the sketch time slightly
+                                                                                                       1                                                                          due to the reduced memory footprint. The effect of compression
+                                   1
+                                                                                                                                                                                  on total running time depends on the ratio of sketching and se-
+                                        28    212   216    220      224                                     1      0.5     0.25      0.1    0.05
+                                       #Re-evaluations in CELF                                                              α
+                                                                                                                                                                                  lection time, where scale-free and sparse graphs exhibit different
+                                                                                                                                                                                  patterns. Scale-free graphs usually have one or several large CCs
+Figure 8: Compare P-tree and Win-Tree in the number of re-
+                                                                                                                                                                                  in the sampled graphs since they are dense, while sparse graphs
+evaluations and selection time. (a): Let #𝐶𝐸𝐿𝐹 , #P-tree and #Win-Tree
+represent the total number of re-evaluations needed in the corresponding
+                                                                                                                                                                                  usually have many small CCs. This can also be seen by the overall
+method. Each point represents a tested graph. Each blue circle is a data                                                                                                          influence in Tab. 3: even though we use a smaller 𝑝 on scale-free
+point (#𝐶𝐸𝐿𝐹, #Win-Tree/#𝐶𝐸𝐿𝐹 ). Each orange triangle is a data point                                                                                                             networks, the total influence is still much larger than the sparse
+(#𝐶𝐸𝐿𝐹, #P-tree/#𝐶𝐸𝐿𝐹 ). (b): Each point represents a tested graph under                                                                                                          graphs. On scale-free graphs, due to large CCs on sampled graphs,
+different values of 𝛼. The y-axis is P-tree selection time/Win-Tree selection                                                                                                     selecting any seed in a large CC may significantly lower the score of
+time. The orange cross is the average value under each 𝛼.                                                                                                                         other vertices, leading to much more total evaluations than sparse
+                                                                                                                                                                                  graphs. As a result, a smaller 𝛼 causes a clear time increase for seed
+                                                                                                                                                                                  selection on scale-free networks because each evaluation becomes
+                                   Win-Tree: Sketch Construction                                           P-Tree: Sketch Construction                                            slower while only having a small impact on most sparse graphs.
+                                   Win-Tree: Seed Selection                                                P-Tree: Seed Selection                                                    We provide the total number of evaluations on each graph as a
+                                   Win-Tree: Memory Usage                                                  P-Tree: Memory Usage                                                   reference in the full version [77].
+                                             SLDT                                LJ
+                                                                                                                750
+                                                                                                                                TW                                                P-tree vs. Win-Tree. We now study both data structures for seed
+                                 0.5                                20                                          500
+                                                                                                                250                                                               selection. Our goal is to achieve high parallelism without causing
+                                 0.0                                 0                                            0
+                                                                                                                                                                                  much overhead in work. P-tree has the theoretical guarantee that the
+       Running Time (seconds)
+
+
+
+
+                                                              0.1                                           5                                   50
+                                                                                                                                                                                  total number of evaluations is no more than twice that in CELF. To
+                                                                                                                                                      Memory Usage (GB)
+
+
+
+
+                                                              0.2
+                                               FT                                SD                                             GER
+                                1000                           1000
+                                                                                                                  10                                                              evaluate the work overhead, we compare the number of evaluations
+                                 500                             500                                              5
+                                                                                                                                                                                  for both data structures to CELF in Fig. 8(a). For each graph, we
+                                   0                               0                                              0
+                                                              50
+                                                                                                            100
+                                                                                                                                                5                                 count the number of evaluations done by CELF as 𝑥 and that by
+                                                              100                                                                               10
+                                                                                                                                                15                                P-tree and Win-Tree as 𝑦1 and 𝑦2 , respectively. We plot all (𝑥, 𝑦1 /𝑥)
+                                              HH5                              CH5                                          COS5
+                                  2                                 10                                                                                                            as blue dots and all (𝑥, 𝑦2 /𝑥) as orange triangles. The number of
+                                                                                                                200
+                                  1
+                                  0
+                                                                     5
+                                                                     0                                            0
+                                                                                                                                                                                  evaluations done by P-trees is very close to that by CELF (1.03× on
+                                                              2
+                                                                                                            2.5
+                                                                                                            5.0
+                                                                                                                                                200                               average), while Win-Trees require slightly more (1.7× on average).
+                                                                                                            7.5                                 400
+                                                                                                                                                                                  The result is consistent with our theoretical analysis.
+                                         1
+                                       0.5
+
+                                                     5
+                                                   0.1
+
+                                                          5
+
+
+                                                                           1
+                                                                         0.5
+
+                                                                                   5
+                                                                                 0.1
+
+                                                                                                   5
+
+
+                                                                                                                         1
+                                                                                                                       0.5
+
+                                                                                                                                  5
+                                                                                                                                0.1
+
+                                                                                                                                           5
+
+
+
+
+                                                                                                                                                                                     As mentioned in Sec. 4.2, we expect Win-Trees to perform better
+                                             0.2
+
+
+                                                      0.0
+
+
+
+
+                                                                            0.2
+
+
+                                                                                              0.0
+
+
+
+
+                                                                                                                            0.2
+
+
+                                                                                                                                       0.0
+
+
+
+
+Figure 7: Running time and memory with different values of 𝛼. The                                                                                                                 in practice due to various reasons. To study this, we plotted Fig. 8(b)
+𝑥-axis represents the compression rate. The growing up 𝑦-axis represents                                                                                                          as a comparison for selection time between P-tree and Win-Tree
+the running time (in seconds) of the sketching and selecting process. The                                                                                                         under different compression ratios. Each data point represents a
+growing down 𝑦-axis represents the total memory usage (in GB). The gray                                                                                                           graph, and the value is the ratio of selection time between P-tree and
+horizontal line represents the CSR size of each graph, which is the basic                                                                                                         Win-Tree. The average ratios are always larger than 1, indicating
+memory we need to load the graph.
+
+
+
+
+                                                                                                                                                                           410
+better performance for Win-Tree, but the advantage decreases as 𝛼                 sets of vertices that can reach them. Many IM algorithms (e.g., [16,
+becomes smaller (higher compression). This is because when 𝛼 is                   74, 75, 79]), including No-Singles [63] and Ripples [55, 56] that we
+large, the evaluation is fast, and the major time is on the tree oper-            compared to, use reverse sketches. These algorithms can trade off
+ations, where Win-Trees is more advantageous due to the reasons                   (lower) solution quality for (better) performance/space, by adjusting
+mentioned in Sec. 4.2. With higher compression (small 𝛼), the eval-               the size of 𝑇 . This paper focuses on forward sketches because our
+uation becomes more expensive. Since the P-tree evaluates fewer                   compression technique is designed for them. However, the parallel
+vertices, the overall selection time is more likely to be better. To fur-         data structures we proposed for seed selection, P-tree and Win-Tree,
+ther understand this, we focus on the five topmost points (circled)               are independent of forward sketches. Applying P-tree and Win-Tree
+in Fig. 8(b): those data points are from COS5, where P-tree is 8–12×              to reverse-reachable sketches can be interesting for future work.
+slower than Win-Tree. For COS5, the number of vertices 𝑛 is large,                Space-Efficient Connectivity. We are aware of a few algorithms
+but only hundreds of vertices are evaluated in total. Thus, the seed              that can compute graph connectivity using 𝑜 (𝑛) space [7, 17, 29, 45],
+selection time is dominated by constructing the data structures,                  which share a similar motivation with PaC-IM. However, PaC-IM
+i.e., 𝑂 (𝑛 log 𝑛) work for P-tree to maintain total ordering, and 𝑂 (𝑛)           does not require computing connectivity in 𝑜 (𝑛) space, but only
+for Win-Tree that is a lot faster. Since the number of evaluations is             requires storing it in 𝑂 (𝑛) space. Hence, the goal here is essentially
+small, most of the vertices in the tree are never touched, and thus,              different, although these approaches are inspiring.
+maintaining their order wastes the work.
+    In Fig. 7, we also compare the time and space between P-tree                  7   CONCLUSION AND DISCUSSIONS
+and Win-Tree. Similar to the discussions above, when 𝛼 is small,                  This paper addresses the scalability issues in existing IM systems by
+Win-Tree is almost always faster than P-tree, but P-tree may perform              novel techniques including sketch compression and parallel CELF.
+better when 𝛼 is large. However, the advantage is quite small since               Our sketch compression (Sec. 3) applies to the IC model and undi-
+the number of evaluations of Win-Tree is still close to P-tree (see               rected graphs, and avoids the 𝑂 (𝑅𝑛) space usage in SOTA systems,
+Fig. 8(a)). Win-Tree also uses smaller memory than P-tree. As dis-                which allows PaC-IM to run on much larger graphs without sacri-
+cussed in Sec. 4.2, this is because P-tree needs to explicitly maintain           ficing much performance. To the best of our knowledge, our new
+tree pointers and balancing criteria, while each Win-Tree node only               data structures (Sec. 4) are the first parallel version of CELF seed
+needs to store the vertex id (2𝑛 integers in total).                              selection, which is general to any submodular diffusion models.
+    Based on these observations, PaC-IM always uses Win-Tree by                      In addition to new algorithms, our techniques are carefully an-
+default, but also provides the interface for users to choose P-trees.             alyzed (Thm. 3.1 and 4.3) and have good theoretical guarantees
+                                                                                  regarding work, parallelism, and space. These analyses not only
+6    RELATED WORK                                                                 lead to good practical performance but also help to understand how
+Influence Maximization (IM). IM has been widely studied for                       the techniques interplay. The techniques are also experimentally
+decades with a list of excellent surveys [4, 6, 51, 62, 88] that review           verified in Fig. 6 to 8. The theory and our careful implementation
+the applications and papers on this topic. IM is also of high rele-               also lead to stable speedup with increasing core counts (see Fig. 6).
+vance of the data management community, and many excellent pa-                    Limitations, Generalizations, and Future Work. Our paper
+pers published recently regarding benchmarking [2, 58], new algo-                 discussed two techniques: sketch compression and parallel CELF.
+rithms [39], new propagation models and applications [8, 40, 76, 83],             Sketch compression uses the idea of memoization. As in previous
+and interdisciplinary extensions [85, 89].                                        work [20, 31], this approach only applies to IC models on undirected
+    A survey paper [51] roughly categorizes IM algorithms into three              graphs, so that each edge can be sampled in advance regardless of
+methodologies: simulation-based, proxy-based, and sketch-based.                   the actual influence propagation direction. One future direction is to
+Among them, (Monte Carlo) simulation-based approaches (e.g., [33,                 study similar approaches for sketch compression on directed graphs,
+42, 49, 80, 87, 90]) are the most general and apply to most settings              but it may require a different technique, such as a compressed
+(i.e., graph types and diffusion models); however, they do not take               representation for strongly connected components.
+advantage of the specific settings, so generally, their performance                  For parallel CELF, we believe that our approaches based on P-tree
+is limited. Proxy-based approaches (e.g., [19, 41, 43, 44, 53, 61]) use           and Win-Tree can be generalized to other settings. Within the scope
+simpler algorithms/problems (e.g., PageRank or shortest-paths) to                 of IM, this technique can also be combined with reverse (reachable)
+solve IM. While they can be fast in practice, their solution quality              sketches, as long as the diffusion models are submodular. More-
+has no theoretical guarantees. Sketch-based solutions, as mentioned               over, CELF is a general greedy approach to accelerate optimization
+in Sec. 1 and 2, generally have good performance and theoretical                  problems with submodular objective functions [46, 49, 57]. There-
+guarantees, but only apply to specific diffusion models. Our sketch               fore, our approaches can potentially provide parallelism for these
+compression focuses on the IC model. We note that the parallel                    problems. We leave these extensions as future work.
+data structures in Sec. 4 are general to submodular diffusion models                 One limitation of Win-Tree is that it does not have strong bounds
+such as linear threshold [42], and more [76, 85].                                 as P-trees. An interesting future work is to derive a strong bound
+    Sketch-based algorithms can further be categorized into forward               regarding the number of evaluations. In the worst case, Win-Tree
+(influence) sketches and reverse (reachable) sketches [51]. As the                may require 𝑂 (𝑛) evaluations due to the asynchrony of the threads.
+names suggest, forward sketches record the influence that each                    However, such a bad case is very unlikely in practice, and Win-Tree
+vertex can propagate to in sampled graphs. Most algorithms [20–22,                has demonstrated good performance in our experiments. Giving a
+31, 42, 59] mentioned in this paper, including PaC-IM, use forward                tighter bound under some practical assumptions may be interesting.
+sketches. Reverse sketches find a sample of vertices 𝑇 and keep the
+
+
+
+
+                                                                            411
+REFERENCES                                                                                     [26] Laxman Dhulipala, Changwan Hong, and Julian Shun. 2020. ConnectIt: a frame-
+                                                                                                    work for static and incremental parallel graph connectivity algorithms. Proceed-
+ [1] 2010.      OpenStreetMap © OpenStreetMap contributors.              https://www.               ings of the VLDB Endowment (PVLDB) 14, 4 (2020), 653–667.
+     openstreetmap.org/.                                                                       [27] Xiaojun Dong, Yan Gu, Yihan Sun, and Yunming Zhang. 2021. Efficient Stepping
+ [2] Akhil Arora, Sainyam Galhotra, and Sayan Ranu. 2017. Debunking the myths                       Algorithms and Implementations for Parallel Shortest Paths. In ACM Symposium
+     of influence maximization: An in-depth benchmarking study. In ACM SIGMOD                       on Parallelism in Algorithms and Architectures (SPAA). 184–197.
+     International Conference on Management of Data (SIGMOD). 651–666.                         [28] Dheeru Dua and Casey Graf. 2017. UCI Machine Learning Repository. http:
+ [3] N. S. Arora, R. D. Blumofe, and C. G. Plaxton. 2001. Thread Scheduling for                     //archive.ics.uci.edu/ml/.
+     Multiprogrammed Multiprocessors. Theory of Computing Systems (TOCS) 34, 2                 [29] Jeff Edmonds, Chung Keung Poon, and Dimitris Achlioptas. 1999. Tight lower
+     (01 Apr 2001).                                                                                 bounds for st-connectivity on the NNJAG model. SIAM J. Comput. 28, 6 (1999),
+ [4] M. Athanassoulis, A. Ailamaki, S. Chen, P. B. Gibbons, and R. Stoica. 2010. Flash              2257–2284.
+     in a DBMS: Where and How? IEEE Data Engineering Bulletin 33, 4 (2010), 28–34.             [30] Jordi Fonollosa, Sadique Sheik, Ramón Huerta, and Santiago Marco. 2015. Reser-
+     Special issue on data management using modern storage hardware.                                voir computing compensates slow response of chemosensor arrays exposed to
+ [5] Lars Backstrom, Dan Huttenlocher, Jon Kleinberg, and Xiangyang Lan. 2006.                      fast varying gas concentrations in continuous monitoring. Sensors and Actuators
+     Group formation in large social networks: membership, growth, and evolution. In                B: Chemical 215 (2015), 618–629.
+     ACM International Conference on Knowledge Discovery and Data Mining (SIGKDD).             [31] Gökhan Göktürk and Kamer Kaya. 2020.               Boosting parallel influence-
+     44–54.                                                                                         maximization kernels for undirected networks with fusing and vectorization.
+ [6] Suman Banerjee, Mamata Jenamani, and Dilip Kumar Pratihar. 2020. A survey on                   IEEE Transactions on Parallel and Distributed Systems 32, 5 (2020), 1001–1013.
+     influence maximization in a social network. Knowledge and Information Systems             [32] Jacob Goldenberg, Barak Libai, and Eitan Muller. 2001. Talk of the network: A
+     62, 9 (2020), 3417–3455.                                                                       complex systems look at the underlying process of word-of-mouth. Marketing
+ [7] Naama Ben-David, Guy E. Blelloch, Jeremy T Fineman, Phillip B Gibbons, Yan                     letters 12 (2001), 211–223.
+     Gu, Charles McGuffey, and Julian Shun. 2018. Implicit Decomposition for Write-            [33] Amit Goyal, Wei Lu, and Laks VS Lakshmanan. 2011. Celf++ optimizing the
+     Efficient Connectivity Algorithms. In IEEE International Parallel and Distributed              greedy algorithm for influence maximization in social networks. In Proceedings
+     Processing Symposium (IPDPS).                                                                  of the 20th international conference companion on World wide web. 47–48.
+ [8] Song Bian, Qintian Guo, Sibo Wang, and Jeffrey Xu Yu. 2020. Efficient algorithms          [34] Mark Granovetter. 1978. Threshold models of collective behavior. American
+     for budgeted influence maximization on massive social networks. Proceedings of                 journal of sociology 83, 6 (1978), 1420–1443.
+     the VLDB Endowment 13, 9 (2020), 1498–1510.                                               [35] Yan Gu, Ziyang Men, Zheqi Shen, Yihan Sun, and Zijin Wan. 2023. Parallel
+ [9] Timo Bingmann, Thomas Keh, and Peter Sanders. 2015. A bulk-parallel pri-                       Longest Increasing Subsequence and van Emde Boas Trees. In ACM Symposium
+     ority queue in external memory with STXXL. In International Symposium on                       on Parallelism in Algorithms and Architectures (SPAA).
+     Experimental Algorithms (SEA). Springer, 28–40.                                           [36] Yan Gu, Zachary Napier, and Yihan Sun. 2022. Analysis of Work-Stealing and
+[10] Guy Blelloch, Daniel Ferizovic, and Yihan Sun. 2022. Joinable Parallel Balanced                Parallel Cache Complexity. In SIAM Symposium on Algorithmic Principles of
+     Binary Trees. ACM Transactions on Parallel Computing (TOPC) 9, 2 (2022), 1–41.                 Computer Systems (APOCS). SIAM, 46–60.
+[11] Guy E. Blelloch, Daniel Anderson, and Laxman Dhulipala. 2020. ParlayLib — a               [37] Yan Gu, Zachary Napier, Yihan Sun, and Letong Wang. 2022. Parallel Cover
+     toolkit for parallel algorithms on shared-memory multicore machines. In ACM                    Trees and their Applications. In ACM Symposium on Parallelism in Algorithms
+     Symposium on Parallelism in Algorithms and Architectures (SPAA). 507–509.                      and Architectures (SPAA). 259–272.
+[12] Guy E. Blelloch, Daniel Ferizovic, and Yihan Sun. 2016. Just Join for Parallel            [38] Yan Gu, Omar Obeya, and Julian Shun. 2021. Parallel In-Place Algorithms: Theory
+     Ordered Sets. In ACM Symposium on Parallelism in Algorithms and Architectures                  and Practice. In SIAM Symposium on Algorithmic Principles of Computer Systems
+     (SPAA).                                                                                        (APOCS). 114–128.
+[13] Guy E. Blelloch, Jeremy T. Fineman, Yan Gu, and Yihan Sun. 2020. Optimal parallel         [39] Qintian Guo, Sibo Wang, Zhewei Wei, and Ming Chen. 2020. Influence maximiza-
+     algorithms in the binary-forking model. In ACM Symposium on Parallelism in                     tion revisited: Efficient reverse reachable set generation with bound tightened.
+     Algorithms and Architectures (SPAA). 89–102.                                                   In ACM SIGMOD International Conference on Management of Data (SIGMOD).
+[14] Guy E. Blelloch, Yan Gu, Julian Shun, and Yihan Sun. 2020. Parallelism in                      2167–2181.
+     Randomized Incremental Algorithms. J. ACM 67, 5 (2020), 1–27.                             [40] Shixun Huang, Wenqing Lin, Zhifeng Bao, and Jiachen Sun. 2022. Influence
+[15] Robert D. Blumofe and Charles E. Leiserson. 1999. Scheduling multithreaded                     maximization in real-world closed social networks. Proceedings of the VLDB
+     computations by work stealing. J. ACM 46, 5 (1999), 720–748.                                   Endowment 16, 2 (2022), 180–192.
+[16] Christian Borgs, Michael Brautbar, Jennifer Chayes, and Brendan Lucier. 2014.             [41] Kyomin Jung, Wooram Heo, and Wei Chen. 2012. Irie: Scalable and robust influ-
+     Maximizing social influence in nearly optimal time. In Proceedings of the twenty-              ence maximization in social networks. In 2012 IEEE 12th international conference
+     fifth annual ACM-SIAM symposium on Discrete algorithms. SIAM, 946–957.                         on data mining. IEEE, 918–923.
+[17] Andrei Z Broder, Anna R Karlin, Prabhakar Raghavan, and Eli Upfal. 1994. Trad-
+                                                                                               [42] David Kempe, Jon Kleinberg, and Éva Tardos. 2003. Maximizing the spread of in-
+     ing space for time in undirected s-t connectivity. SIAM J. Comput. 23, 2 (1994),
+                                                                                                    fluence through a social network. In ACM International Conference on Knowledge
+     324–334.
+                                                                                                    Discovery and Data Mining (SIGKDD). 137–146.
+[18] Wei Chen, Wei Lu, and Ning Zhang. 2012. Time-critical influence maximization
+                                                                                               [43] Jinha Kim, Seung-Keol Kim, and Hwanjo Yu. 2013. Scalable and parallelizable
+     in social networks with time-delayed diffusion process. In AAAI Conference on
+                                                                                                    processing of influence maximization for large-scale social networks?. In 2013
+     Artificial Intelligence, Vol. 26. 591–598.
+                                                                                                    IEEE 29th international conference on data engineering (ICDE). IEEE, 266–277.
+[19] Wei Chen, Chi Wang, and Yajun Wang. 2010. Scalable influence maximization
+                                                                                               [44] Masahiro Kimura and Kazumi Saito. 2006. Tractable models for information
+     for prevalent viral marketing in large-scale social networks. In Proceedings of
+                                                                                                    diffusion in social networks. In Knowledge Discovery in Databases: PKDD 2006:
+     the 16th ACM SIGKDD international conference on Knowledge discovery and data
+                                                                                                    10th European Conference on Principles and Practice of Knowledge Discovery in
+     mining. 1029–1038.
+                                                                                                    Databases Berlin, Germany, September 18-22, 2006 Proceedings 10. Springer, 259–
+[20] Wei Chen, Yajun Wang, and Siyu Yang. 2009. Efficient influence maximization
+                                                                                                    271.
+     in social networks. In ACM International Conference on Knowledge Discovery and
+                                                                                               [45] Adrian Kosowski. 2013. Faster walks in graphs: a 𝑂˜ (𝑛 2 ) time-space trade-off
+     Data Mining (SIGKDD). 199–208.
+                                                                                                    for undirected st connectivity. In ACM-SIAM Symposium on Discrete Algorithms
+[21] Suqi Cheng, Huawei Shen, Junming Huang, Guoqing Zhang, and Xueqi Cheng.
+                                                                                                    (SODA). 1873–1883.
+     2013. Staticgreedy: solving the scalability-accuracy dilemma in influence maxi-
+                                                                                               [46] Andreas Krause and Daniel Golovin. 2014. Submodular function maximization.
+     mization. In Proceedings of the 22nd ACM international conference on Information
+                                                                                                    Tractability 3 (2014), 71–104.
+     & Knowledge Management. 509–518.
+                                                                                               [47] Haewoon Kwak, Changhyun Lee, Hosung Park, and Sue Moon. 2010. What is
+[22] Edith Cohen, Daniel Delling, Thomas Pajor, and Renato F Werneck. 2014. Sketch-
+                                                                                                    Twitter, a social network or a news media?. In International World Wide Web
+     based influence maximization and computation: Scaling up with guarantees. In
+                                                                                                    Conference (WWW). 591–600.
+     Proceedings of the 23rd ACM international conference on conference on information
+                                                                                               [48] YongChul Kwon, Dylan Nunley, Jeffrey P Gardner, Magdalena Balazinska, Bill
+     and knowledge management. 629–638.
+                                                                                                    Howe, and Sarah Loebman. 2010. Scalable clustering algorithm for N-body
+[23] Thomas H. Cormen, Charles E. Leiserson, Ronald L. Rivest, and Clifford Stein.
+                                                                                                    simulations in a shared-nothing cluster. In International Conference on Scientific
+     2009. Introduction to Algorithms (3rd edition). MIT Press.
+                                                                                                    and Statistical Database Management. Springer, 132–150.
+[24] Laxman Dhulipala, Guy E. Blelloch, Yan Gu, and Yihan Sun. 2022. PaC-trees:
+                                                                                               [49] Jure Leskovec, Andreas Krause, Carlos Guestrin, Christos Faloutsos, Jeanne
+     Supporting Parallel and Compressed Purely-Functional Collections. In ACM
+                                                                                                    VanBriesen, and Natalie Glance. 2007. Cost-effective outbreak detection in
+     Conference on Programming Language Design and Implementation (PLDI).
+                                                                                                    networks. In Proceedings of the 13th ACM SIGKDD international conference on
+[25] Laxman Dhulipala, Guy E. Blelloch, and Julian Shun. 2021. Theoretically efficient
+                                                                                                    Knowledge discovery and data mining. 420–429.
+     parallel graph algorithms can be fast and scalable. ACM Transactions on Parallel
+                                                                                               [50] Jure Leskovec, Kevin J Lang, Anirban Dasgupta, and Michael W Mahoney. 2009.
+     Computing (TOPC) 8, 1 (2021), 1–70.
+                                                                                                    Community structure in large networks: Natural cluster sizes and the absence of
+                                                                                                    large well-defined clusters. Internet Mathematics 6, 1 (2009), 29–123.
+
+
+
+
+                                                                                         412
+[51] Yuchen Li, Ju Fan, Yanhao Wang, and Kian-Lee Tan. 2018. Influence maximization             [71] Yihan Sun and Guy Blelloch. 2019. Implementing Parallel and Concurrent Tree
+     on social graphs: A survey. IEEE Transactions on Knowledge and Data Engineering                 Structures. In ACM Symposium on Principles and Practice of Parallel Programming
+     (TKDE) 30, 10 (2018), 1852–1872.                                                                (PPOPP). 447–450.
+[52] Bo Liu, Gao Cong, Dong Xu, and Yifeng Zeng. 2012. Time constrained influence               [72] Yihan Sun and Guy E Blelloch. 2019. Parallel Range, Segment and Rectangle
+     maximization in social networks. In International Symposium on Algorithms and                   Queries with Augmented Maps. In SIAM Symposium on Algorithm Engineering
+     Computation (ISAAC). IEEE, 439–448.                                                             and Experiments (ALENEX). 159–173.
+[53] Qi Liu, Biao Xiang, Enhong Chen, Hui Xiong, Fangshuang Tang, and Jeffrey Xu                [73] Yihan Sun, Daniel Ferizovic, and Guy E Blelloch. 2018. PAM: Parallel Augmented
+     Yu. 2014. Influence maximization over large-scale social networks: A bounded                    Maps. In ACM Symposium on Principles and Practice of Parallel Programming
+     linear approach. In Proceedings of the 23rd ACM international conference on                     (PPOPP).
+     conference on information and knowledge management. 171–180.                               [74] Youze Tang, Yanchen Shi, and Xiaokui Xiao. 2015. Influence maximization in
+[54] Robert Meusel, Oliver Lehmberg, Christian Bizer, and Sebastiano Vigna. 2014.                    near-linear time: A martingale approach. In ACM International Conference on
+     Web Data Commons — Hyperlink Graphs. http://webdatacommons.org/                                 Knowledge Discovery and Data Mining (SIGKDD). 1539–1554.
+     hyperlinkgraph.                                                                            [75] Youze Tang, Xiaokui Xiao, and Yanchen Shi. 2014. Influence maximization: Near-
+[55] Marco Minutoli, Maurizio Drocco, Mahantesh Halappanavar, Antonino Tumeo,                        optimal time complexity meets practical efficiency. In Proceedings of the 2014
+     and Ananth Kalyanaraman. 2020. cuRipples: Influence maximization on multi-                      ACM SIGMOD international conference on Management of data. 75–86.
+     GPU systems. In International Conference for High Performance Computing, Net-              [76] Dimitris Tsaras, George Trimponias, Lefteris Ntaflos, and Dimitris Papadias.
+     working, Storage, and Analysis (SC). 1–11.                                                      2021. Collective influence maximization for multiple competing products with
+[56] Marco Minutoli, Mahantesh Halappanavar, Ananth Kalyanaraman, Arun Satha-                        an awareness-to-influence model. Proceedings of the VLDB Endowment 14, 7
+     nur, Ryan Mcclure, and Jason McDermott. 2019. Fast and scalable implementa-                     (2021), 1124–1136.
+     tions of influence maximization algorithms. In 2019 IEEE International Conference          [77] Letong Wang, Xiangyun Ding, Yan Gu, and Yihan Sun. 2023.                    Fast
+     on Cluster Computing (CLUSTER). IEEE, 1–12.                                                     and Space-Efficient Parallel Algorithms for Influence Maximization.
+[57] Baharan Mirzasoleiman, Ashwinkumar Badanidiyuru, Amin Karbasi, Jan Von-                         arXiv:2311.07554 [cs.DS]
+     drák, and Andreas Krause. 2015. Lazier than lazy greedy. In AAAI Conference on             [78] Letong Wang, Xiaojun Dong, Yan Gu, and Yihan Sun. 2023. Parallel Strong Con-
+     Artificial Intelligence, Vol. 29.                                                               nectivity Based on Faster Reachability. In ACM SIGMOD International Conference
+[58] Naoto Ohsaka. 2020. The solution distribution of influence maximization: A                      on Management of Data (SIGMOD).
+     high-level experimental study on three algorithmic approaches. In ACM SIGMOD               [79] Xiaoyang Wang, Ying Zhang, Wenjie Zhang, Xuemin Lin, and Chen Chen. 2016.
+     International Conference on Management of Data (SIGMOD). 2151–2166.                             Bring order into the samples: A novel scalable method for influence maximization.
+[59] Naoto Ohsaka, Takuya Akiba, Yuichi Yoshida, and Ken-ichi Kawarabayashi.                         IEEE Transactions on Knowledge and Data Engineering 29, 2 (2016), 243–256.
+     2014. Fast and accurate influence maximization on large networks with pruned               [80] Yu Wang, Gao Cong, Guojie Song, and Kunqing Xie. 2010. Community-based
+     monte-carlo simulations. In AAAI Conference on Artificial Intelligence.                         greedy algorithm for mining top-k influential nodes in mobile social networks.
+[60] Simona Mihaela Orzan. 2004. On distributed verification and verified distribution.              In Proceedings of the 16th ACM SIGKDD international conference on Knowledge
+     (2004).                                                                                         discovery and data mining. 1039–1048.
+[61] Lawrence Page, Sergey Brin, Rajeev Motwani, and Terry Winograd. 1999. The                  [81] Yiqiu Wang, Shangdi Yu, Laxman Dhulipala, Yan Gu, and Julian Shun. 2021.
+     PageRank citation ranking: Bringing order to the web. Technical Report. Stanford                GeoGraph: A Framework for Graph Processing on Geometric Data. ACM SIGOPS
+     InfoLab.                                                                                        Operating Systems Review 55, 1 (2021), 38–46.
+[62] Sancheng Peng, Yongmei Zhou, Lihong Cao, Shui Yu, Jianwei Niu, and Weijia                  [82] Yiqiu Wang, Shangdi Yu, Yan Gu, and Julian Shun. 2021. A Parallel Batch-
+     Jia. 2018. Influence analysis in social networks: A survey. Journal of Network                  Dynamic Data Structure for the Closest Pair Problem. In ACM Symposium on
+     and Computer Applications 106 (2018), 17–32.                                                    Computational Geometry (SoCG).
+[63] Diana Popova, Naoto Ohsaka, Ken-ichi Kawarabayashi, and Alex Thomo. 2018.                  [83] Jiadong Xie. 2022. Hindering Influence Diffusion of Community. In ACM SIGMOD
+     Nosingles: a space-efficient algorithm for influence maximization. In Proceed-                  International Conference on Management of Data (SIGMOD). 2518–2520.
+     ings of the 30th International Conference on Scientific and Statistical Database           [84] Jaewon Yang and Jure Leskovec. 2015. Defining and evaluating network commu-
+     Management. 1–12.                                                                               nities based on ground-truth. Knowledge and Information Systems 42, 1 (2015),
+[64] Matthew Richardson, Rakesh Agrawal, and Pedro Domingos. 2003. Trust manage-                     181–213.
+     ment for the semantic web. In The Semantic Web-ISWC 2003: Second International             [85] Wentao Zhang, Zhi Yang, Yexin Wang, Yu Shen, Yang Li, Liang Wang, and Bin
+     Semantic Web Conference, Sanibel Island, FL, USA, October 20-23, 2003. Proceedings              Cui. 2021. GRAIN: improving data efficiency of gra ph neural networks via
+     2. Springer, 351–368.                                                                           diversified in fluence maximization. Proceedings of the VLDB Endowment 14, 11
+[65] Manuel Gomez Rodriguez, David Balduzzi, and Bernhard Schölkopf. 2011. Un-                       (2021), 2473–2482.
+     covering the temporal dynamics of diffusion networks. (2011), 561–568.                     [86] Yu Zheng, Like Liu, Longhao Wang, and Xing Xie. 2008. Learning transportation
+[66] Peter Sanders, Kurt Mehlhorn, Martin Dietzfelbinger, and Roman Dementiev.                       mode from raw gps data for geographic applications on the web. In International
+     [n.d.]. Sequential and Parallel Algorithms and Data Structures. Springer.                       World Wide Web Conference (WWW). 247–256.
+[67] Thomas C Schelling. 2006. Micromotives and macrobehavior. WW Norton &                      [87] Chuan Zhou, Peng Zhang, Wenyu Zang, and Li Guo. 2015. On the upper bounds
+     Company.                                                                                        of spread for greedy algorithms in social network influence maximization. IEEE
+[68] Zheqi Shen, Zijin Wan, Yan Gu, and Yihan Sun. 2022. Many Sequential Iterative                   Transactions on Knowledge and Data Engineering 27, 10 (2015), 2770–2783.
+     Algorithms Can Be Parallel and (Nearly) Work-efficient. In ACM Symposium on                [88] Fan Zhou, Xovee Xu, Goce Trajcevski, and Kunpeng Zhang. 2021. A survey of
+     Parallelism in Algorithms and Architectures (SPAA).                                             information cascade analysis: Models, predictions, and recent advances. ACM
+[69] Julian Shun, Yan Gu, Guy E. Blelloch, Jeremy T. Fineman, and Phillip B Gibbons.                 Computing Surveys (CSUR) 54, 2 (2021), 1–36.
+     2015. Sequential random permutation, list contraction and tree contraction                 [89] Yuqing Zhu, Jing Tang, Xueyan Tang, and Lei Chen. 2021. Analysis of influence
+     are highly parallel. In ACM-SIAM Symposium on Discrete Algorithms (SODA).                       contribution in social advertising. Proceedings of the VLDB Endowment 15, 2
+     431–448.                                                                                        (2021), 348–360.
+[70] George M. Slota, Sivasankaran Rajamanickam, and Kamesh Madduri. 2014. BFS                  [90] Honglei Zhuang, Yihan Sun, Jie Tang, Zhang Jialin, and Xiaoming Sun. 2013.
+     and coloring-based parallel algorithms for strongly connected components and                    Influence Maximization in Dynamic Social Networks. In IEEE International Con-
+     related problems. In IEEE International Parallel and Distributed Processing Sym-                ference on Data Mining (ICDM).
+     posium (IPDPS). IEEE, 550–559.
+
+
+
+
+                                                                                          413
+

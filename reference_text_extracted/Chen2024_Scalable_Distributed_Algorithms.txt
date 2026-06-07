@@ -1,0 +1,2768 @@
+Journal of Artificial Intelligence Research 80 (2024) 1575-1622        Submitted 09/2023; published 08/2024
+
+
+
+
+       Scalable Distributed Algorithms for Size-Constrained
+        Submodular Maximization in the MapReduce and
+                      Adaptive Complexity Models
+Yixin Chen                                                                         chen777@tamu.edu
+Department of Computer Science & Engineering
+Texas A&M University
+College Station, TX
+
+Tonmoy Dey                                                                               tdey@fsu.edu
+Department of Computer Science
+Florida State University
+Tallahassee, FL, USA
+
+Alan Kuhnle                                                                         kuhnle@tamu.edu
+Department of Computer Science & Engineering
+Texas A&M University
+College Station, TX
+
+
+                                                   Abstract
+
+     Distributed maximization of a submodular function in the MapReduce (MR) model has
+     received much attention, culminating in two frameworks that allow a centralized algorithm
+     to be run in the MR setting without loss of approximation, as long as the centralized
+     algorithm satisfies a certain consistency property – which had previously only been known
+     to be satisfied by the standard greedy and continous greedy algorithms. A separate line of
+     work has studied parallelizability of submodular maximization in the adaptive complexity
+     model, where each thread may have access to the entire ground set. For the size-constrained
+     maximization of a monotone and submodular function, we show that several sublinearly
+     adaptive (highly parallelizable) algorithms satisfy the consistency property required to
+     work in the MR setting, which yields practical, parallelizable and distributed algorithms.
+     Separately, we develop the first distributed algorithm with linear query complexity for this
+     problem. Finally, we provide a method to increase the maximum cardinality constraint for
+     MR algorithms at the cost of additional MR rounds.
+
+
+
+1. Introduction
+Submodular maximization has become an important problem in data mining and machine
+learning with real world applications ranging from video summarization (Mirzasoleiman
+et al., 2018) and mini-batch selection (Joseph et al., 2019) to more complex tasks such as
+active learning (Rangwani et al., 2021) and federated learning (Balakrishnan et al., 2022). In
+this work, we study the size-constrained maximization of a monotone, submodular function
+(SMCC), formally defined in Section 1.3. Because of the ubiquity of problems requiring the
+optimization of a submodular function, a vast literature on submodular optimization exists;
+we refer the reader to the surveys (Liu et al., 2020; Liu, 2020).
+
+©2024 The Authors. Published by AI Access Foundation under Creative Commons Attribution License CC BY 4.0.
+                                       Dey, Chen & Kuhnle
+
+
+
+
+  Reference             Ratio          MR       Adaptivity (Θ)              Queries (Ξ)                     kmax
+                                       Rounds
+                        1
+  RG                    2
+                          (1 − 1e )    2        O(k)                        O(nk + k2 ℓ)                    O( ℓn2 )
+                                                                                       2 2                         2
+  PAlg                  1 − 1e − ε     O( ε12 ) O( εk2 )                    O( nk
+                                                                               ε2
+                                                                                  + kε4ℓ )                  O( nεℓ2
+                                                                                                                      )
+                                                                                       2
+                                                                                     k ℓ2
+  DDist                 1 − 1e − ε     O( 1ε )  O( k  )                     O( nk
+                                                                                ε + ε2 )
+                                                                                                               nε
+                                                                                                            O( ℓ2 )
+                                                  ε                                                               1/r
+                                                                                        k2 ℓrm2 (ε1/r )
+                                                                        
+  BCG                   1−ε            r        O     rk
+                                                     ε2/r
+                                                           log2 ( 1/r
+                                                                 ε
+                                                                   1
+                                                                      )     O( nkr
+                                                                               ε1/r
+                                                                                    +
+                                                                                             ε3/r
+                                                                                                        )   O( nεℓ2 )
+  PG                    0.545 − ε      2        O(k2 )                      O(nk + k )3
+                                                                                                            O( ℓn2 )
+                        1                                                                                            n
+  TG                    2
+                                       2        O(n log(k))                 O(n log(k))                     O( ℓ2 log(k) )
+                        1
+  R-DASH (Alg. 4)       2
+                          (1− 1e −ε)   2        O(
+                                                  
+                                                   log(k) log(n)
+                                                         ε4
+                                                                 )
+                                                                   
+                                                                            O(
+                                                                              n log(k)
+                                                                                 ε4
+                                                                                       )
+                                                                                                                n
+                                                                                                            O( ℓ2 )
+  G-DASH (Alg. 5)       1 − 1e − ε        1
+                                       O( ε )   O
+                                                     log(k) log(n)
+                                                          ε5
+                                                                              n log(k)
+                                                                            O( ε5 )                         O( nε
+                                                                                                               ℓ2
+                                                                                                                    )
+                        3                           log(n)                    n log(k)                              nε
+  T-DASH (Alg. 10)      8
+                           −ε          2        O( ε3 )                     O( ε4 )                         O( ℓ2 log(k) )
+                        1                                                                                            n
+  L-Dist (Alg. 7)       8
+                                       2        O( n
+                                                   ℓ)                       O(n)                            O( ℓ2 log(n) )
+
+Table 1: Theoretical comparison of our algorithms to MapReduce model algorithms: RG
+         of Barbosa et al. (2015), PAlg of Barbosa et al. (2016), DDist of Kazemi et al.
+         (2021), BCG of Epasto et al. (2017), PG of Mirrokni and Zadimoghaddam (2015),
+         and TG of Liu and Vondrak (2019). The column kmax provides the maximum
+         cardinality constraint that the algorithm can compute.
+
+A foundational result of Nemhauser, Wolsey, and Fisher (1978) shows that a simple greedy
+algorithm (Greedy, pseudocode in Appendix H) achieves the optimal approximation ratio
+for SMCC of 1 − 1/e ≈ 0.63 in the value query model, in which the submodular function
+f is available to the algorithm as an oracle that returns f (S) when queried with set S.
+However, because of the modern revolution in data (Mao et al., 2021; Ettinger et al., 2021),
+there is a need for more scalable algorithms. Specifically, the standard greedy algorithm
+is a centralized algorithm that needs access to the whole dataset, makes many adaptive
+rounds (defined below) of queries to the submodular function, and has quadratic total query
+complexity in the worst case.
+
+Distributed Algorithms for SMCC. Massive data sets are often too large to fit on
+a single machine and are distributed over a cluster of many machines. In this context,
+there has been a line of work developing algorithms for SMCC in the MapReduce model,
+defined formally in Section 1.3 (see Table 1 and the Related Work section below). Of these,
+PAlg (Barbosa et al., 2015) is a general framework that allows a centralized algorithm
+Alg to be converted to the MapReduce distributed setting with nearly the same theoretical
+approximation ratio, as long as Alg satisfies a technical, randomized consistency property
+(RCP), defined in Section 1.3.
+
+In addition, DistributedDistorted (Kazemi et al., 2019), is also a general framework
+that can adapt any Alg satisfying RCP, as we show1 in Section 4.2. However, to the best
+of our knowledge, the only centralized algorithms to satisfy this property are the Greedy
+(Nemhauser et al., 1978) and the continuous greedy algorithm of Calinescu, Chekuri, Pal,
+and Vondrak (2007).
+
+Parallelizable Algorithms for SMCC. A separate line of works, initiated by Balkanski
+and Singer (2018) has taken an orthogonal approach to scaling up the standard greedy
+    1
+      In Kazemi et al. (2019), an instantiated version of DistributedDistorted with a distorted greedy
+algorithm is analyzed.
+
+
+                                                     1576
+                      Scalable Distributed Algorithms for SMCC
+
+
+
+
+algorithm: parallelizable algorithms for SMCC as measured by the adaptive complexity of
+the algorithm, formally defined in Section 1.3. In this model, each thread may have access
+to the entire ground set and hence these algorithms do not apply in a distributed setting.
+Altogether, these algorithms have exponentially improved the adaptivity of standard greedy
+from O(n) to O(log(n)) while obtaining the nearly the same 1 − 1/e approximation ratio
+(Fahrbach, Mirrokni, & Zadimoghaddam, 2019b; Balkanski, Rubinstein, & Singer, 2019;
+Ene & Nguyen, 2019; Chekuri & Quanrud, 2019). Recently, highly practical sublinearly
+adaptive algorithms have been developed without compromising theoretical guarantees
+(Breuer, Balkanski, & Singer, 2020; Chen, Dey, & Kuhnle, 2021). However, none of these
+algorithms have been shown to satisfy the RCP.
+
+Combining Parallelizability and Distributed Settings. In this work, we study
+parallelizable, distributed algorithms for SMCC; each node of the distributed cluster likely
+has many processors, so we seek to take advantage of this situation by parallelizing the
+algorithm within each machine in the cluster. In the existing MapReduce algorithms, the
+number of processors ℓ could be set to the number of processors available to ensure the
+usage of all available resources – this would consider each processor as a separate machine
+in the cluster. However, there are a number of disadvantages to this approach: 1) A large
+number of machines severely restricts the size of the cardinality constraint k – since, in all
+of the MapReduce algorithms, a set of size kℓ must be stored on a single machine; therefore,
+we must have k ≤ O(Ψ/ℓ) = O(n/ℓ2 ). For example, with n = 106 , ℓ = 256 implies that
+k ≤ 15 · C, for some C. However, if each machine has 8 processor cores, the number of
+machines ℓ can be set to 32 (and then parallelized on each machine), which enables the use
+of 256 processors with k ≤ 976 · C. As the number of cores and processors per physical
+machine continues to grow, large practical benefits can be obtained by a parallelized and
+distributed algorithm. 2) Modern CPU architectures have many cores that all share a
+common memory, and it is inefficient to view communication between these cores to be as
+expensive as communication between separate machines in a cluster.
+
+In addition to the MapReduce and adaptive complexity models, the total query complexity
+of the algorithm to the submodular oracle is also relevant to the scalability of the algorithm.
+Frequently, evaluation of the submodular function is expensive, so the time spent answering
+oracle queries dominates the other parts of the computation. Therefore, the following
+questions are posed: Q1: Is it possible to design constant-factor approximation distributed
+algorithms with 1) constant number of MapReduce rounds; 2) sublinear adaptive complexity
+(highly-parallelizable); and 3) nearly linear total query complexity? Q2: Can we design
+practical distributed algorithms that also meet these three criteria?
+
+1.1 Contributions
+In overview, the contributions of the paper are: 1) an exponential improvement in adaptivity
+(from Ω(n) to O(log n)) for an algorithm with a constant number of MR rounds; 2) the first
+linear-time, constant-factor algorithm with constant MR rounds; 3) a way to increase the size
+constraint limitation at the cost of additional MR rounds; and 4) an empirical evaluation on
+a cluster of 64 machines that demonstrates an order of magnitude improvement in runtime
+is obtained by combining the MR and adaptive complexity models.
+
+                                             1577
+                                  Dey, Chen & Kuhnle
+
+
+
+
+To develop MR algorithms with sublinear adaptivity, we first modify and analyze the low-
+adaptive algorithm ThreshSeqMod from Chen et al. (2021) and show that our modification
+satisfies the RCP (Section 2). Next, ThreshSeqMod is used to create a low-adaptive
+greedy procedure LAG; LAG then satisfies the RCP, so can be used within PAlg (Barbosa
+et al., 2016) to yield a 1 − 1/e − ε approximation in O(1/ε2 ) MR rounds, with adaptivity
+O(log n). We show in Section 4.2 that DistributedDistorted (Kazemi et al., 2021) also
+works with any Alg satisfying RCP, which yields an improvement in the number of MR
+rounds to achieve the same ratio. The resulting algorithm we term G-DASH (Section 4),
+which achieves ratio 1 − 1/e − ε with O(log2 n) adaptivity and O(1/ε) MR rounds.
+Although G-DASH achieves nearly the optimal ratio in constant MR rounds and sublinear
+adaptivity, the number of MR rounds is high. To obtain truly practical algorithms, we develop
+constant-factor algorithms with 2 MR rounds: R-DASH and T-DASH with O(log(k) log(n))
+and O(log n) adaptivity, respectively, and with approximation ratios of 12 (1 − 1/e − ε) (≃
+0.316) and 3/8 − ε. R-DASH is our most practical algorithm and may be regarded as a
+parallelized version of RandGreeDI (Barbosa et al., 2015), the first MapReduce algorithm
+for SMCC and the state-of-the-art MR algorithm in terms of empirical performance. T-
+DASH is a novel algorithm that improves the theoretical properties of R-DASH at the cost
+of empirical performance (see Table 1 and Section 8). Notably, the adaptivity of T-DASH
+is O (log(n)) which is close to the best known adaptivity for a constant factor algorithm of
+Chen et al. (2021), which has adaptivity of O(log(n/k)).
+Although our MR algorithms are nearly linear time (within a polylogarithmic factor of
+linear), all of the existing MR algorithms are superlinear time, which raises the question
+of if an algorithm exists that has a linear query complexity and has constant MR rounds
+and constant approximation factor. We answer this question affirmatively by adapting a
+linear-time algorithm of Kuhnle (2021), Chen et al. (2021), and showing that our adaptation
+satisfies RCP (Section 3). Subsequently, we develop the first MR algorithm (L-Dist) with
+an overall linear query complexity.
+Our next contribution is MED, a general plug-in framework for distributed algorithms,
+which increases the size of the maximum cardinality constraint at the cost of more MR
+rounds. As discussed above, the maximum k value of any prior MR algorithm for SMCC
+is O(n/ℓ2 ), where ℓ is the number of machines; MED increases this to O(n/ℓ). We also
+show that under certain assumptions on the objective function (which are satisfied by all of
+the empirical applications evaluated in Section 8), MED can be run with kmax = n, which
+removes any cardinality restrictions. When used in conjunction with a γ-approximation MR
+algorithm, MED provides an (1 − e−γ )-approximate solution.
+Finally, an extensive empirical evaluation of our algorithms and the current state-of-the-art
+on a 64-machine cluster with 32 cores each and data instances ranging up to 5 million nodes
+show that R-DASH is orders of magnitude faster than state-of-the-art MR algorithms and
+demonstrates an exponential improvement in scaling with larger k. Moreover, we show
+that MR algorithms slow down with increasing number of machines past a certain point,
+even if enough memory is available, which further motivates distributing a parallelizable
+algorithm over smaller number of machines. This observation also serves as a motivation
+for the development of the MED+Alg framework. In our evaluation, we found that
+
+                                            1578
+                     Scalable Distributed Algorithms for SMCC
+
+
+
+
+the MED+Alg framework delivers solutions significantly faster than the Alg for large
+constraints, showcasing its superior performance and efficiency.
+A previous version of this work was published in a conference (Dey, Chen, & Kuhnle, 2023).
+In that version, RCP was claimed to be shown for the ThresholdSeq algorithm of Chen
+et al. (2021). Unfortunately, RCP does not hold for this algorithm. In this version, we
+provide a modified version of the ThresholdSeq algorithm of Chen et al. (2021), for
+which we show RCP. Additionally, in this version, we introduce the first linear time MR
+algorithm, LinearTime-Distributed (L-Dist). Finally, in our empirical evaluation, we
+expand upon the conference version by conducting two additional experiments using a
+larger cluster comprising 64 machines. These additional experiments aim to evaluate the
+performance of L-Dist and investigate the effectiveness of MED in handling increasing
+cardinality constraints, respectively.
+
+1.2 Organization
+The rest of this paper is organized as follows. In Section 2, we present the low-adaptive
+procedures and show they satisfy the RCP. In Section 3, we analyze an algorithm with
+linear query complexity and show it satisfies the RCP. In Section 4, we show how to use
+algorithms satisfying the RCP to obtain MR algorithms. In Section 5, we improve the
+theoretical properties of our 2-round MR algorithm. In Section 6, we detail the linear-time
+MR algorithm. In Section 7, we show how to increase the supported constraint size by
+adding additional MR rounds. In Section 8, we conduct our empirical evaluation.
+
+1.3 Preliminaries
+A submodular set function captures the diminishing gain property of adding an element to
+a set that decreases with increase in size of the set. Formally, let N be a finite set of size
+n. A non-negative set function f : 2N → R+ is submodular iff for all sets A ⊆ B ⊆ N and
+x ∈ N \B, f (A ∪ x) − f (A) ≥ f (B ∪ x) − f (B). The submodular function is monotone if
+f (A) ≤ f (B) for all A ⊆ B. We use ∆ (x | S) to denote the marginal game of element x to
+set S: ∆ (x | S) = f (S ∪ {x}) − f (S). In this paper, we study the following optimization
+problem for submodular optimization under cardinality constraint (SMCC):
+                           O ← arg max f (S); subject to |S| ≤ k                           (1)
+                                    S⊆N
+
+
+MapReduce Model. The MapReduce (MR) model is a formalization of distributed
+computation into MapReduce rounds of communication between machines. A dataset of
+size n is distributed on ℓ machines, each with memory to hold at most Ψ elements of the
+ground set. The total memory of the machines is constrained to be Ψ · ℓ = O(n). After each
+round of computation, a machine may send O(Ψ) amount of data to other machines. We
+assume ℓ ≤ n1−c for some constant c ≥ 1/2.
+Next, we formally define the RCP needed to use the two frameworks to convert a centralized
+algorithm to the MR setting, as discussed previously.
+Property 1 (Randomized Consistency Property of Barbosa et al. (2016)). Let q be a fixed
+sequence of random bits; and Alg be a randomized algorithm with randomness determined
+
+                                            1579
+                                   Dey, Chen & Kuhnle
+
+
+
+
+by q. Suppose Alg(N , q) returns a pair of sets, (AlgSol(N , q), AlgRel(N , q)), where
+AlgSol(N , q) is the feasible solution and AlgRel(N , q) is a set providing additional
+information. Let A and B be two disjoint subsets of N , and that for each b ∈ B, AlgRel(A∪
+{b}, q) = AlgRel(A, q). Also, suppose that Alg(A, q) terminates successfully. Then
+Alg(A ∪ B, q) terminates successfully and AlgSol(A ∪ B, q) = AlgSol(A, q).
+
+Adaptive Complexity. The adaptive complexity of an algorithm is the minimum number
+of sequential adaptive rounds of at most polynomially many queries, in which the queries to
+the submodular function can be arranged, such that the queries in each round only depend
+on the results of queries in previous rounds.
+
+1.4 Related Work
+MapReduce Algorithms. Addressing the coverage maximization problem (a special case
+of SMCC), Chierichetti et al. (2010) proposed an approximation algorithm achieving a ratio
+of 1 − 1/e, with polylogarithmic MapReduce (MR) rounds. This was later enhanced by
+Blelloch, Simhadri, and Tangwongsan (2012), who reduced the number of rounds to log2 n.
+Kumar et al. (2013) contributed further advancements with a 1 − 1/e algorithm, significantly
+reducing the number of MR rounds to logarithmic levels. Additionally, they introduced a
+1/2 − ϵ approximation algorithm that operates within O(1/δ) MR rounds, albeit with a
+logarithmic increase in communication complexity.
+
+For SMCC, Mirzasoleiman et al. (2013) introduced the two-round distributed greedy algo-
+rithm (GreedI), demonstrating its efficacy through empirical studies across various machine
+                                                                                        √
+learning applications. However, its worst-case approximation guarantee is 1/Θ(min{ k, ℓ}).
+Subsequent advancements led to the development of constant-factor algorithms by Barbosa
+et al. (2015). Barbosa et al. (2015) notably introduced randomization into the distributed
+greedy algorithm GreedI, resulting in the RandGreeDI algorithm. This algorithm achieves
+a 12 (1 − 1/e) approximation ratio with two MR rounds and O (nk) queries. Mirrokni and
+Zadimoghaddam (2015) also introduced an algorithm with two MR rounds, where the first
+round finded randomized composable core-sets and the second round applied a tie-breaking
+rule. This algorithm improve the approximation   ratio from 12 (1 − 1/e) to 0.545 − ε. Later on,
+                                         2
+                                           
+Barbosa et al. (2016) proposed a O 1/ε round algorithm with the optimal (1 − 1/e − ε)
+approximation ratio without data duplication. Then, Kazemi et al. (2021) improved its
+space and communication complexity by a factor of O (1/ε) with the same approximation
+ratio. Another two-round algorithm, proposed by Liu and Vondrak (2019), achieved an
+1/2 − ε approximation ratio, but requires data duplication with four times more elements
+distributed to each machine in the first round. As a result, distributed setups have a more
+rigid memory restriction when running this algorithm.
+
+Parallelizable Algorithms. A separate line of works consider the parallelizability of the
+algorithm, as measured by its adaptive complexity. Balkanski and Singer (2018) introduced
+the first O (log(n))-adaptive algorithm, achieving a (1/3 − ε) approximation ratio with
+O nk 2 log3 (n) query complexity for SMC Then, Balkanski
+               
+                                                               et al. (2019) enhanced the
+approximation ratio to 1 − 1/e − ε with O nk 2 log2 (n) query complexity while maintaining
+                                                       
+
+the same sublinear adaptivity. In the meantime, Ene and Nguyen (2019), Chekuri and
+Quanrud (2019), and Fahrbach et al. (2019b) achieved the same approximation ratio and
+
+                                             1580
+                      Scalable Distributed Algorithms for SMCC
+
+
+
+
+adaptivity but with improved query complexities: O (npoly(log(n))) for Ene and Nguyen
+(2019), O (n log(n)) for Chekuri and Quanrud (2019), and O (n) for Fahrbach et al. (2019b).
+Recently, highly practical sublinearly adaptive algorithms have been developed without
+compromising on the approximation     ratio. FAST, introduced by Breuer et al. (2020),
+                            2
+operates with O log(n) log (log(k)) adaptive rounds and O (n log (log(k))) queries, while
+LS+PGB, proposed by Chen et al. (2021), runs with O (log(n)) adaptive rounds and O (n)
+queries. However, none of these algorithms have been shown to satisfy the RCP.
+
+
+
+Fast (Low Query Complexity) Algorithms. Since a query to the oracle for the
+submodular function is typically an expensive operation, the total query complexity of an
+algorithm is highly relevant to its scalability. The work by Badanidiyuru and Vondrak (2014)
+reduced the query complexity of the standard greedy algorithm from O (kn) to O (n log(n)),
+while nearly maintaining the ratio of 1 − 1/e. Subsequently, Mirzasoleiman et al. (2015)
+utilized random sampling on the ground set to achieve the same approximation ratio in
+expectation with optimal O (n) query complexity. Afterwards, Kuhnle (2021) obtained a
+deterministic algorithm that achieves ratio 1/4 in exactly n queries, and the first deterministic
+algorithm with O (n) query complexity and (1 − 1/e − ε) approximation ratio. Since our
+goal is to develop practical algorithms in this work, we develop paralellizable and distributed
+algorithms with nearly linear query complexity (i.e. within a polylogarithmic factor of
+linear). Further, we develop the first linear-time algorithm with constant number of MR
+rounds, although it doesn’t parallelize well.
+
+
+
+Non-monotone Algorithms. If the submodular function is no longer assumed to be
+monotone, the SMCC problem becomes more difficult. Here, we highlight a few works in
+each of the categories of distributed, parallelizable, and query efficient. Lee et al. (2009)
+provided the first constant-factor approximation algorithm    with an approximation ratio
+of (1/4 − ε) and a query complexity of O nk 5 log(k) . Building upon that, Gupta et al.
+                                                        
+
+(2010) reduced the query complexity to O (nk) by replacing the local search procedure with
+a greedy approach that resulted in a slightly worse approximation ratio. Subsequently,
+Buchbinder et al. (2014) incorporated randomness to achieve an expected 1/e approximation
+ratio with O (nk) query complexity. Furthermore, Buchbinder et al. (2017) improved it
+to O (n) query complexity while maintaining the same approximation ratio in expectation.
+For parallelizable algorithms in the adaptive complexity model, Ene and Nguyen (2020)
+achieved the current   best (1/e − ε) approximation ratio with O (log(n)) adaptivity and
+       2   2
+               
+O nk log (n) queries to the continuous oracle (a continuous relaxation of the original
+value oracle). Later, Chen and Kuhnle (2024) achieved the current best sublinear adaptivity
+and nearly linear query complexity with a (1/6 − ε) approximation ratio. In terms of
+distributed algorithms in the MapReduce model, RandGreeDI proposed by Barbosa et al.
+(2015) achieved a 0.1 approximation ratio within 2 MR rounds and O (nk) query complexity.
+Simulaneously, Mirrokni and Zadimoghaddam (2015) also presented a 2-round algorithm
+with a 0.14 approximation ratio and O (nk) query complexity. Afterwards,      Barbosa et al.
+(2016) proposed a 2-round continuous algorithm with a 0.232 1 − 1ℓ approximation ratio.
+                                                                     
+
+
+                                              1581
+                                    Dey, Chen & Kuhnle
+
+
+
+
+Algorithm 1 Low-Adaptive Threshold Algorithm (ThreshSeqMod)
+ 1: procedure ThreshSeqMod(f, X, k, δ, ε, τ, q)
+ 2:     Input: evaluation oracle f : 2N → R+ , subset X ⊆ N , constraint k, confidence δ,
+                                                                                         m}
+                                                                  l q← {σ1 ,. . . , σM+1
+    error ε, threshold τ , a finite set of sequences of random bits
+                                                                          1            n
+ 3:     Initialize S0 ← ∅ , R0 ← ∅ V0 ← X, M ← 4 1 + βε log δ , β ←
+                      −1
+    ε 16 log 1−e4−ε/2
+ 4:     for j ← 1 to M + 1 do
+ 5:         Update Vj ← {x ∈ Vj−1 : ∆ (x | Sj−1 ) ≥ τ }
+ 6:         if |Vj | = 0 or |Sj−1 | = k then
+ 7:             return Sj−1 , Rj−1 , success
+ 8:        Vj ← random-permutation(Vj , σj )
+ 9:        s ← min{k    − |Sj−1 |, |Vj |}
+           Λ ← 1, 2, . . . , min s, 1ε       ∪ {⌊(1 + ε)u ⌋ : 1 ≤ ⌊(1 + ε)u ⌋ ≤ s, u ∈ N} ∪ {s}
+                  
+10:
+11:        B[λ] ← False, ∀λ ∈ Λ
+12:        for λ ∈ Λ in parallel do
+13:            Tλ ← {v1 , v2 , . . . , vλ }
+14:            if ∆ (Tλ | Sj−1 ) /|Tλ | ≥ (1 − ε)τ then
+15:                 B[λ] ← True
+16:          ′
+           λj ← min {λ ∈ Λ : B[λ] = False OR λ = s}
+17:        Rj ← Rj−1 ∪ Tλ′j
+           if λ′j ≤ 1ε then λ∗j ← λ′j − 1 else λ∗j ← λ′j
+                      
+18:
+19:        Sj ← Sj−1 ∪ Tλ∗j
+20:     return SM +1 , RM +1 , failure
+
+2. Low-Adaptive Algorithms That Satisfy the RCP
+In this section, we analyze two low-adaptive procedures, ThreshSeqMod (Alg. 1), LAG
+(Alg. 2), variants of low-adaptive procedures proposed in Chen et al. (2021). This analysis
+enables their use in the distributed, MapReduce setting. For convenience, we regard the
+randomness of the algorithms to be determined by a sequence of random bits q, which is an
+input to each algorithm.
+
+Observe that the randomness of both of ThreshSeqMod and LAG only comes from the
+random permutations of Vj on Line 8 of ThreshSeqMod, since LAG employs ThreshSeq-
+Mod as a subroutine. Consider an equivalent version of these algorithms in which the entire
+ground set N is permuted randomly, from which the permutation of Vj is extracted. That
+is, if σ is the permutation of N , the permutation of V is given by v < w iff σ(v) < σ(w), for
+v, w ∈ V . Then, the random vector q specifies a sequence of permutations of N : (σ1 , σ2 , . . .),
+which completely determines the behavior of both algorithms.
+
+2.1 Low-Adaptive Threshold (ThreshSeqMod) Algorithm
+This section presents the analysis of the low-adaptive threshold algorithm, ThreshSeqMod
+(Alg. 1; a variant of ThresholdSeq from Chen et al. (2021)). In ThreshSeqMod, the
+
+                                               1582
+                       Scalable Distributed Algorithms for SMCC
+
+
+
+
+randomness is explicitly dependent on a random vector q. This modification ensures the
+consistency property in the distributed setting. Besides the addition of randomness q,
+ThreshSeqMod employs an alternative strategy of prefix selection within the for loop.
+Instead of identifying the failure point (the average marginal gain is under the threshold)
+after the final success point (the average marginal gain is above the threshold) in Chen
+et al. (2021), ThreshSeqMod determines the first failure point. This adjustment not only
+addresses the consistency problem but also preserves the theoretical guarantees below.
+Theorem 1. Suppose ThreshSeqMod is run with input (f, X, k, δ, ε, τ, q). Then, the
+algorithm has adaptive complexity O(log(n/δ)/ε3 ) and outputs S, R ⊆ N , where S is the
+solution set with |S| ≤ k and R provides additional information with |R| = O (k). The
+following properties hold: 1) The algorithm succeeds with probability at least 1 − δ/n. 2)
+There are O(n/ε3 ) oracle queries in expectation. 3) It holds that f (S)/|S| ≥ (1 − 2ε)τ /(1 + ε).
+4) If |S| < k, then ∆ (x | S) < τ for all x ∈ N .
+
+2.1.1 Analysis of Consistency
+Lemma 1. ThreshSeqMod satisfies the randomized consistency property (Property 1).
+
+Proof. Consider that the algorithm runs for all M + 1 iterations of the outer for loop; if the
+algorithm would have returned at iteration j, the values Si and Vi , for i > j keep their values
+from when the algorithm would have returned. The proof relies upon the fact that every call
+to ThreshSeqMod(·, q) uses same sequences of permutations of N : {σ1 , σ2 , . . . , σM +1 }.
+We refer to iterations of the outer for loop on Line 4 of Alg. 1 simply as iterations. Since
+randomness only happens with the random permutation of N at each iteration in Alg. 1,
+the randomness of ThreshSeqMod(·, q) is determined by q, which satisfies the hypothesis
+of Property 1.
+For the two sets returned by ThreshSeqMod(N , q), SM +1 = ThreshSeqModSol(N , q)
+represents the feasible solution, and RM +1 = ThreshSeqModRel(N , q) is the set that
+provides additional information. We consider the runs of (1) ThreshSeqMod(A, q), (2)
+ThreshSeqMod(A ∪ {b}, q), and (3) ThreshSeqMod(A ∪ B, q) together. Variables of (1)
+are given the notation defined in the pseudocode; variables of (2) are given the superscript
+b; and variables of (3) are given the superscript ′ . Suppose for each b ∈ B, RM
+                                                                               b
+                                                                                 +1 = RM +1 .
+                      ′
+The lemma holds if SM +1 = SM +1 and ThreshSeqMod(A ∪ B, q) terminates successfully.
+Let P (i) be the statement for iteration i of the outer for loop on Line 4 that
+  (i) Si = Si′ , and
+  (ii) for all b ∈ B, Si = Sib , Ri = Rib , and
+ (iii) Vi = Vi′ \ B, and
+ (iv) for all b ∈ B, Vi = Vib \ {b}.
+If P (M + 1) is true, and ThreshSeqMod(A, q) and ThreshSeqMod(A ∪ B, q) terminate
+at the same iteration, implying that ThreshSeqMod(A ∪ B, q) also terminates successfully,
+then the lemma holds immediately. In the following, we prove these two statements by
+induction.
+
+                                                  1583
+                                       Dey, Chen & Kuhnle
+
+
+
+
+For i = 0, it is clear that S0 = S0′ = R0 = R0b = ∅, and V0 = V0′ \ B = V0b \ {b} = N \ B for all
+b ∈ B. Therefore, P (0) is true. Next, suppose that P (i−1) is true. We show that P (i) is also
+true, and if ThreshSeqMod(A, q) terminates at iteration i, ThreshSeqMod(A ∪ B, q)
+also terminates at iteration i.
+Firstly, we show that (iii) and (iv) of P (i) hold. Since P (i − 1) holds, it indicates that
+         ′
+Si−1 = Si−1      b
+             = Si−1  for any b ∈ B by (i) and (ii) of P (i − 1). So, (iii) and (iv) of P (i) clearly
+                            ′ , Sb
+hold since the sets Si−1 , Si−1                                  ′    b
+                                 i−1 involved in updating Vi , Vi , Vi on Line 5 are equal (after
+B is removed).
+Secondly, we prove that (i) and (ii) of P (i) hold and that if ThreshSeqMod(A, q) terminates
+at iteration i, ThreshSeqMod(A ∪ B, q) also terminates at iteration i.
+If ThreshSeqMod(A, q) terminates at iteration i because |Si−1 | = k, then the other two
+runs of ThreshSeqMod also terminate at iteration i, since |Si−1    ′ | = |S b | = |S
+                                                                              i−1          i−1 | = k by
+(i) and (ii) of P (i − 1). Moreover, (i) and (ii) of P (i) are true since Si′ , Sib , Si , Rib , and Ri
+do not update.
+If ThreshSeqMod(A, q) terminates at iteration i because Vi = ∅, then by (iii) and (iv)
+of P (i), it holds that Vib \ {b} = Vi′ \ B = ∅ for all b ∈ B. Thus, Vib must be empty;
+otherwise, Vib = {b} and b will be added to Ri−1      b     at iteration i which contradicts the fact that
+                 b
+b ̸∈ RM +1 = RM +1 . Therefore, b has been filtered out before iteration i or will be filtered out
+at iteration i in both ThreshSeqMod(A ∪ {b}, q) and ThreshSeqMod(A ∪ B, q) since
+            b
+the sets Si−1          B involved in updating V b and V B are the same. Consequently, V ′ is
+                and Si−1                                i          i                                   i
+also an empty set and ThreshSeqMod(A ∪ B, q) terminates at iteration i. Futhermore,
+(i) and (ii) of P (i) are true since Si′ , Sib , Si , Rib , and Ri do not update.
+Finally, consider the case that ThreshSeqMod(A, q) does not terminate at iteration i,
+where Vi ̸= ∅ and |Si−1 | < k. By (iii) and (iv), it holds that Vi = Vi′ \ B = Vib \ {b}, for any
+b ∈ B. Let b1 ∈ B be the first element appeared in the sequence of Vi′ , λ# be the index of b1
+in the order of the permutation of Vi′ . If such b1 does not exist (i.e. Vi = Vi′ = Vib , for any
+b ∈ B), let λ# = |Vi | + 1. Fig. 1 depicts the relationship between three sequences Vi , Vib1
+                                                            b1
+and Vi′ . Let Tλ′i , Tλb′1 , Tλ′ ′ be sets added to Ri−1 , Ri−1    ′
+                                                                , Ri−1 at iteration i respectively. Since
+                      i     i
+Vib1 and Vi′ are subsets of the same random permutation of N , and Vi′ \ B = Vib1 \ {b1 }, λ#
+is also the index of b1 in Vib1 . Also, it holds that
+
+                                      Tx = Txb1 = Tx′ , ∀x < λ# .                                     (2)
+             b1                           b1                          ′    #
+Since b1 ̸∈ RM  +1 , it holds that b1 ̸∈ Tλ′i , which indicates that λi < λ . By the definition of
+λ′i on Line 16,
+                                       B 1 [x] = True, ∀x < λ′i ,
+                                    ( b
+
+                                        B b1 [λ′i ] = False.
+
+Follows from Equality 2, and λ′i < λ# , it holds that
+                            (
+                              B[x] = B ′ [x] = True, ∀x < λ′i ,
+                                    B[λ∗i ] = B ′ [λ′i ] = False,
+
+                                                   1584
+                                  Scalable Distributed Algorithms for SMCC
+
+
+
+
+                                             Same Subsequences
+
+                      Vi
+                                                                b1
+                     Vib1
+                                                                 b1                   b2
+                      V′i
+                                                                            λ #: index of b1
+                                          First failure point (B[λ′i ] = False)
+                                               Sequence Order
+
+
+        Figure 1: This figure depicts the relationship between Vi , Vib1 and Vi′ in the circumstance
+￼                 that |Si−1 | < k, Vi ̸= ∅.
+    ￼
+
+
+
+        Therefore, Tλ∗i = Tλb∗ = Tλ′ ∗ , and even further Tλ′i = Tλb′ = Tλ′ ′ . So, Property (i) and (ii) hold.
+                              i       i                                 i         i
+
+
+
+
+        2.1.2 Analysis of Guarantees
+        There are three adjustments in ThreshSeqMod compared with ThresholdSeq in Chen
+        et al. (2021) altogether. First, we made the randomness q explicit allowing us to still consider
+        each permutation on Line 8 as a random step. Therefore, the analysis of the theoretical
+        guarantees is not influenced by adopting the randomness q. Second, the prefix selection
+        step is changed from identifying the failure point after the final success point to identifying
+        the initial failure point. Note that, this change is necessary for the algorithm to satisfy
+        RCP (Property1). However, by making this change, fewer elements could be filtered out
+        at the next iteration. Fortunately, we are still able to filter out a constant fraction of the
+        candidate set. Third, the algorithm returns one more set that provides extra information.
+        Since the additional set does not affect the functioning of the algorithm, it does not influence
+        the theoretical guarantees. In the following, we will provide the detailed analysis for the
+        theoretical guarantees.
+        As demonstrated by Lemma 2 below, an increase in the number of selected elements results
+        in a corresponding increase in the number of filtered elements. Consequently, there exists a
+        point, say t, such that a given constant fraction of Vj can be filtered out if we are adding
+        more than t elements. The proof of this lemma is quite similar to the proof of Lemma 12
+        in Chen et al. (2021) which can be found in Appendix C.
+
+                                                            1585
+                                      Dey, Chen & Kuhnle
+
+
+
+
+Lemma 2. At an iteration j, let Ai = {x ∈ Vj : ∆ (x | Ti ∪ Sj−1 ) < τ } after Line 5. It holds
+that |A0 | = 0, |A|Vj | | = |Vj | and |Ai | ≤ |Ai+1 |.
+Although we use a smaller prefix based on Line 16 and 18 compared to ThresholdSeq, it
+is still possible that with probability at least 1/2, a constant fraction of Vj will be filtered
+out at the beginning of iteration j + 1, or the algorithm terminates with |Sj | = k; given as
+Lemma 3 in the following. Intuitively, if there are enough such iterations, ThreshSeqMod
+will succeed. Also, the calculation of query complexity comes from Lemma 3 directly. Since
+the analyses of success probability, adaptivity and query complexity simply follows the
+analysis in Chen et al. (2021), we provide these analyses in Appendix C. Next, we prove
+that Lemma 3 always holds.
+Lemma 3. At any iteration j + 1, with probability at least 1/2, either |Vj+1 | ≤ (1 − βε)|Vj |
+after Line 5, or the algorithm terminates with |Sj | = k on Line 7.
+
+Proof. By the definition of Ai in Lemma 2, Aλ∗j will be filtered out from Vj at the next
+iteration. Equivalently, Aλ∗j = Vj \ Vj+1 . After Line 8 at iteration j + 1, by Lemma 2, there
+exists a t such that t = min{i ∈ N : |Ai | ≥ βε|Vj |}. We say an iteration j succeeds, if
+λ∗j ≥ min{s, t}. In this case, it holds that either |Vj \ Vj+1 | ≥ βε|Vj |, or |Sj | = k. In other
+words, iteration j succeeds if there does not exist λ ≤ min{s, t} such that B[λ] = False by
+the selection of λ∗j on Line 18. Instead of directly calculating the success probability, we
+consider the failure probability. Define an element vi bad if ∆ (vi | Sj−1 ∪ Ti−1 ) < τ , and good
+otherwise. Consider the random permutation of Vj as a sequence of dependent Bernoulli
+trials, with success if the element is bad and failure otherwise. When i ≤ min{s, t}, the
+probability of vi is bad is less than βε. If B[λ] = False, there are at least ελ bad elements
+in Tλ . Let {Yi }∞
+                 i=1 be a sequence of independent and identically distributed Bernoulli trials,
+each with success probability βε. Next, we consider the following sequence of dependent
+Bernoulli trials {Xi }∞ i=1 , where Xi = 1vi is bad when i ≤ t, and Xi = Yi otherwise. Define
+B ′ [λ] = False if there are at least ελ bad elements in {Xi }λi=1 . Then, for any λ ≤ min{s, t},
+it holds that P r (B[λ] = False) = P r (B ′ [λ] = False). In the following, we bound the
+probability that there are more than ε-fraction 1s in {Xi }λi=1 for any λ ≤ s,
+
+                                       λ
+                                                        !
+                                       X
+               ′
+                           
+        P r B [λ] = False ≤ P r              Xi ≥ ελ
+                                       i=1
+                                        λ
+                                                       !
+                                       X
+                               ≤ Pr          Yi ≥ ελ                                  (Lemma 9)
+                                       i=1
+                                                 (1−β)2
+                                                            
+                                             −          ελ
+                               ≤ min β, e          1+β           (Markov’s Inequality, Lemma 10)
+                                    n          o
+                               ≤ min β, e−ελ/2                                        (β < 1/16)
+
+Subsequently, the probability of failure at iteration j is calculated below,
+
+    P r (iteration j fails) = P r (∃λ ≤ min{s, t}, s.t., B[λ] = False)
+                            ≤ P r ∃λ ≤ s, s.t., B ′ [λ] = False
+                                                                
+
+
+                                                   1586
+                        Scalable Distributed Algorithms for SMCC
+
+
+
+
+Algorithm 2 Low-Adaptive Greedy (LAG)
+ 1: Input: Evaluation oracle f : 2N → R+ , subset C, constraint k, fixed sequence of random
+    bits (q1 , q2 , . . .), accuracy parameter ε, constant α, value Γ such that Γ ≤ f (O) ≤ Γ/α
+ 2: if Γ = ∅ or α = ∅ then
+ 3:     Γ ← maxx∈N f (x)
+ 4:     α ← 1/k
+ 5: Initialize τ ← Γ/αk, δ ← 1/(log1−ε (α/3)) + 1), S ← ∅,R ← ∅,i ← 0
+ 6: for i ← 0 to log1−ε (α/3) do
+ 7:     τ ← τ (1 − ε)i , g(·) ← f (S ∪ ·)
+ 8:     T1 , T2 ← ThreshSeqMod(g, C, k − |S|, δ, ε/3, τ, qi )
+ 9:     S ← S ∪ T1 , R ← R ∪ T2
+10:     if |S| = k then
+11:          return S, R
+12: return S, R
+
+                                X
+                                      P r B ′ [λ] = False
+                                                             
+                            ≤
+                                λ≤s
+                                ∞
+                                X        n          o
+                            ≤         min β, e−ελ/2
+                                λ=1
+                                         ∞                                                           
+                                         X
+                                                  −ελ/2                1         2               4
+                            ≤ aβ +            e           , where a =          =   log
+                                       λ=a+1
+                                                                      4β         ε           1 − e−ε/2
+                                       e−ε(a+1)/2          1 1  1
+                            ≤ aβ +                   ≤      + =
+                                        1 − e−ε/2          4 4  2
+
+
+
+
+As for the Properties (3) and (4) in Theorem 1, since the structure of the solution set is the
+same as the solution of ThresholdSeq. So, the analysis is similar to what in Chen et al.
+(2021). We provide these proofs in Appendix C.
+
+2.2 Low-Adaptive Greedy (LAG) Algorithm
+Another building block for our distributed algorithms is a simple, low-adaptive greedy
+algorithm LAG (Alg. 2). This algorithm is an instantiation of the ParallelGreedyBoost
+framework of Chen et al. (2021), and it relies heavily on the low-adaptive procedure
+ThreshSeqMod (Alg. 1).
+
+Guarantees. Following      the analysis of Theorem         3 in Chen et al. (2021), LAG achieves
+                      log(α−1 ) log(n log(α−1 )/ε)                                  −1 )
+                                                  
+ratio 1−1/e−ε in O                 ε4
+                                                     adaptive rounds and O( n log(α
+                                                                                 ε4
+                                                                                         ) total queries
+with probability at least 1 − 1/n. Setting Γ = maxx∈N f ({x}) and α = 1/k, LAG has
+adaptive complexity of O log nε4log k and a query complexity of O( n log     ε4
+                                                                                k
+                                                                                  )
+
+Lemma 4. LAG satisfies the randomized consistency property (Property 1).
+
+                                                     1587
+                                       Dey, Chen & Kuhnle
+
+
+
+
+Proof of Lemma 4. Observe that the only randomness in LAG is from the calls to Thresh-
+SeqMod. Since LAG(A, q) succeeds, every call to ThreshSeqMod must succeed as well.
+Moreover, considering that q is used to permute the underlying ground set N , changing the set
+argument A of LAG does not change the sequence received by each call to ThreshSeqMod.
+Order the calls to ThreshSeqMod: ThreshSeqMod(·, q1 ), ThreshSeqMod(·, q2 ), . . . ,
+ThreshSeqMod(·, qm ). Since LAGRel(A ∪ {b}, q) = LAGRel(A, q), it holds that b ̸∈
+ThreshSeqModRel(A∪{b}, qi ), for each b ∈ B and each i. If b ̸∈ ThreshSeqModRel(A∪
+{b}, qi ) is equivalent to ThreshSeqModRel(A ∪ {b}, qi ) = ThreshSeqModRel(A, qi )
+(as shown in Claim 1 in the following), then by application of Lemma 1, ThreshSeqMod(A∪
+B, qi ) terminates successfully and ThreshSeqModSol(A∪B, qi ) = ThreshSeqModSol(A, qi )
+for each i. Therefore, LAGSol(A ∪ B, q) = LAGSol(A, q) and the former call terminates
+successfully.
+
+Next, we provide Claim 1 and its analysis below.
+Claim 1. Let q be a fixed sequence of random bits, A ⊆ N , and b ∈ N \ A. Then,
+b ̸∈ ThreshSeqModRel(A ∪ {b}, q) if and only if ThreshSeqModRel(A ∪ {b}, q) =
+ThreshSeqModRel(A, q).
+
+Proof. It is obvious that if ThreshSeqModRel(A∪{b}, qi ) = ThreshSeqModRel(A, q),
+then b ̸∈ ThreshSeqModRel(A ∪ {b}, q). In the following, we prove the reverse statement.
+Following the analysis of RCP for ThreshSeqMod in Section 2.1.1, we consider the runs
+of (1) ThreshSeqMod(A, q), and (2) ThreshSeqMod(A ∪ {b}, q). Variables of (1) are
+given the notation defined in the pseudocode; variables of (2) are given the superscript b.
+We analyze the following statement P (i) for each iteration i of the outer for loop on Line 4
+in Alg. 1.
+  (i) for all b ∈ B, Si = Sib , Ri = Rib , and
+ (ii) for all b ∈ B, Vi = Vib \ {b}.
+Since b ̸∈ ThreshSeqModRel(A ∪ {b}, q) = RM            b                 b
+                                                         +1 , then b ̸∈ Ri for each i. Thus, the
+analysis in Section 2.1.1 also holds in this case. According to the inductive method, we are able
+to prove that P (M + 1) is true for each i which indicates ThreshSeqModRel(A ∪ {b}, q) =
+ThreshSeqModRel(A, q).
+
+
+
+3. Consistent Linear Time (Linear-TimeCardinality) Algorithm
+In this section, we present the analysis of Linear-TimeCardinality (Alg. 3, LTC), a
+consistent linear time algorithm which is an extension of the highly adaptive linear-time
+algorithm (Alg. 3) in Chen et al. (2021). Notably, to ensure consistency within a distributed
+setting and bound the solution size, LTC incorporates the randomness q, and initializes
+the solution set with the maximum singleton. The algorithm facilitates the creation of
+linear-time MapReduce algorithms, enhancing overall computational efficiency beyond the
+capabilities of current state-of-the-art superlinear algorithms.
+
+                                                 1588
+                      Scalable Distributed Algorithms for SMCC
+
+
+
+
+Algorithm 3 Linear-TimeCardinality (LTC)
+ 1: procedure LTC(f, N , k, q)
+ 2:    Input: evaluation oracle f , constraint k, fixed sequence of random bits q ← (σ).
+ 3:    N ← random-permutation(N , σ)
+ 4:    Initialize a ← first element in arg maxx∈N f (x) , S ← {a}
+ 5:    for x ∈ N do
+ 6:        if ∆ (x | S) ≥ f (S)
+                            k then S ← S ∪ {x}
+ 7:     return S
+
+Theorem 2. Let (f, k) be an instance of SM. The algorithm Linear-TimeCardinality
+outputs S ⊆ N such that the following properties hold: 1) There are O(n) oracle queries and
+O(n) adaptive rounds. 2) Let S ′ be the last k elements in S. It holds that f (S ′ ) ≥ 12 f (S) ≥
+1
+4 f (O), where O is an optimal solution to the instance (f, k). 3) The size of S is limited to
+O(k log(n)).
+
+3.1 Analysis of Consistency
+The highly adaptive linear-time algorithm (Alg. 3) outlined in Chen et al. (2021) commences
+with an empty set and adds elements to it iff. ∆ (x | S) ≥ f (S)/k. Without introducing any
+randomness, this algorithm can be deterministic only if the order of the ground set is fixed.
+Additionally, to limit the solution size, we initialize the solution set with the maximum
+singleton, a choice that also impacts the algorithm’s consistency. However, by selecting the
+first element that maximizes the objective value, the algorithm can maintain its consistency.
+In the following, we provide the analysis of randomized consistency property of LTC.
+Lemma 5. LTC satisfies the randomized consistency property (Property 1).
+
+Proof. Consider the runs of (1) LTC(A, q), (2) LTC(A ∪ {b}, q), and (3) LTC(A ∪ B, q).
+With the same sequence of random bits q, after the random permutation, A, A ∪ {b} and
+A ∪ B are the subsets of the same sequence. For any x ∈ N , let ix be the index of x. Then,
+Nix are the elements before x (including x). Define Six be the intermediate solution of (1)
+after we consider element x. If x ̸∈ A, define Six = Six −1 . Similarly, define Si′x and Sibx
+be the intermediate solution of (2) and (3). If Six = Sibx = Si′x , for any x ∈ N and b ∈ B,
+LTC(A ∪ B, q) = LTC(A, q). Next, we prove the above statement holds.
+For any b ∈ B, since LTC(A, q) = LTC(A ∪ {b}, q), it holds that either f (b) < maxx∈A f (x),
+or f (b) = maxx∈A f (x), and ia < ib , where a is the first element in arg maxx∈A f (x).
+Therefore, a is also the first element in arg maxx∈A∪B f (x). Furthermore, it holds that
+S0 = S0b = S0′ = {a}.
+Suppose that Six −1 = Sibx −1 = Si′x −1 . If x ∈ A or x ̸∈ A ∪ B, naturally, Six = Sibx = Si′x .
+If x ∈ B, Six = Six −1 immediately. Since LTC(A, q) = LTC(A          ∪ {b}, q), it holds that
+                                                            ′
+∆ x | Six −1 < f (Six −1 )/k and Six = Six −1 . So, ∆ x | Six −1 < f (Si′x −1 )/k. Then, Si′x =
+          b           b             b      b
+                                                                
+
+Si′x −1 . Thus, Six = Sibx = Si′x .
+
+
+
+
+                                              1589
+                                             Dey, Chen & Kuhnle
+
+
+
+
+3.2 Analysis of Guarantees
+Query Complexity and Adaptivity. Alg. 3 queries on Line 4 and 6, where there are n
+oracle queries on Line 4 and 1 oracle query for each element received on Line 6. Therefore,
+the query complexity and the adaptivity are both O(n).
+Solution Size. Given that f is a monotone function, it holds that arg maxS∈N f (S) = N .
+Furthermore,P since f ({a}) = maxx∈N f ({x}), the submodularity property implies that
+f ({a}) ≥ n1 x∈N f ({x}) ≥ n1 f (N ). Each element added to S contributes to an increase in
+the solution value by a factor of (1 + k1 ). Therefore,
+
+                                             1 |S|             1 |S| f (N )
+                                                              
+                    f (N ) ≥ f (S) ≥ 1 +           f (a) ≥ 1 +
+                                             k                 k        n
+                  ⇒|S| ≤ log1+ 1 (n) ≤ (k + 1) log(n)                       (log(x) ≥ 1 − x1 )
+                                         k
+
+
+Objective Value. For any x ∈ N , let Sx be the intermediate solution before we process x.
+It holds that ∆ (o | So ) < f (So )/k for any o ∈ O \ S. Then,
+                        (1)     X                (2)    X                        X
+         f (O) − f (S) ≤                ∆ (o | S) ≤             ∆ (o | So ) <            f (So )/k ≤ f (S),
+                              o∈O\S                    o∈O\S                    o∈O\S
+
+where Inequality (1) follows from monotonicity and submodularity, Inequality (2) follows
+from submodularity.
+For any x ∈ S ′ , it holds that ∆ (x | Sx ) ≥ f (Sx )/k. Then,
+                                X                       X               (1) X
+       f (S) − f (S \ S ′ ) =           ∆ (x | Sx ) ≥           f (Sx )/k ≥           f (S \ S ′ )/k = f (S \ S ′ )
+                                x∈S ′                   x∈S ′                 x∈S ′
+                (2)                    1
+    ⇒ f (S ′ ) ≥ f (S) − f (S \ S ′ ) ≥ f (S)
+                                       2
+where Inequalities (1) and (2) follow from submodularity.
+
+
+4. Low-Adaptive Algorithms with Constant MR Rounds (Greedy-DASH
+  and Randomized-DASH)
+Once we have the randomized consistency property of LAG, we can almost immediately use
+it to obtain parallelizable MapReduce algorithms.
+
+4.1 Randomized-DASH
+R-DASH (Alg. 4) is a two MR-rounds algorithm obtained by plugging LAG into the
+RandGreeDI algorithm of Mirzasoleiman et al. (2013), Barbosa et al. (2015). R-DASH
+runs in two MapReduce rounds, O(log (k) log (n)) adaptive rounds, and guarantees the ratio
+1
+2 (1 − 1/e − ε) (≃ 0.316).
+
+Description. The ground set is initially distributed at random by R-DASH across all
+machines M . In its first MR round, R-DASH runs LAG on every machine to obtain
+
+                                                        1590
+                     Scalable Distributed Algorithms for SMCC
+
+
+
+
+Algorithm 4 Randomized-DASH (R-DASH)
+ 1: Input:    Evaluation oracle f : 2N → R, constraint k, error ε, available machines
+    M ← {1, 2, ..., ℓ}
+ 2: for e ∈ N do
+ 3:    Assign e to machine chosen uniformly at random
+ 4: for i ∈ M do
+ 5:    ▷ On machine i
+ 6:    Let Ni be the elements assigned to machine i
+ 7:    Si , Ri ← LAG(f, Ni , k, ε)
+ 8:    Send Si , Ri to primary machine
+ 9: ▷ On primary machine
+                  Sℓ
+10: Gather R ← i=1 Ri
+11: T ← LAG(f, R, k, ε) on machine m1
+12: return V ← arg max {f (T ), f (S1 )}
+
+
+Si , Ri in O (log(k) log(|Ni |)) adaptive rounds. The solutions from every machine are then
+returned to the primary machine, where LAG selects the output solution that guarantees
+1
+2 (1 − 1/e − ε) approximation in O (log(k) log(|R|)) adaptive rounds as stated in Corollary 1.
+First, we provide Theorem 3 and its analysis by plugging any randomized algorithm Alg
+which follows RCP (Property 1) into the framework of RandGreeDI. The proof is a minor
+modification of the proof of Barbosa et al. (2015) to incorporate randomized consistency.
+Then, we can get Corollary 1 for R-DASH immediately.
+
+Theorem 3. Let (f, k) be an instance of SM where k = O (ψ/ℓ). Alg is a randomized
+algorithm which satisfies the Randomized Consistency Property with α approximation ratio,
+Φ(n) query complexity, and Ψ(n) adaptivity. By replacing LAG with Alg, R-DASH returns
+set V with two MR rounds, 2Ψ(n/ℓ) adaptive rounds, (ℓ + 1)Φ(n/ℓ) total queries, O(n)
+communication complexity such that
+
+                                                   α
+                                     E[f (V )] ≥     OPT.
+                                                   2
+
+
+
+
+Proof. Query Complexity and Adaptivity. R-DASH runs with two MR rounds. In
+the first MR round, Alg is invoked ℓ times in parallel, each with a ground set size of
+n/ℓ. So, during the first MR round, the number of queries is ℓΦ(n/ℓ) and the number of
+adaptive rounds is Ψ(n/ℓ). Then, the second MR round calls Alg once, handling at most
+n/ℓ elements. Consequently, the total number of queries of R-DASH is (ℓ + 1)Φ(n/ℓ), and
+the total number of adaptive rounds is 2Ψ(n/ℓ).
+
+Approximation Ratio. Let R-DASH be run with input (f, k, ε, M ). Since ℓ ≤ n1−c ,
+E [|Ni |] = n/ℓ ≥ nc . By an application of Chernoff’s bound to show that the size |Ni | is
+concentrated.
+
+                                            1591
+                                   Dey, Chen & Kuhnle
+
+
+
+
+Let N (1/ℓ) denote the random distribution over subsets of N where each element is included
+independently with probability 1/ℓ. For x ∈ N , let
+             (
+               P rX∼N (1/ℓ),q [AlgRel(X ∪ {x}, q) = AlgRel(X, q)] , if x ∈ O
+        px =                                                                      .
+               0                              , otherwise
+
+Consider S1 = AlgSol(N1 , q) and R1 = AlgRel(N1 , q) on machine m1 . Let O1 = {o ∈ O :
+AlgRel(N1 ∪ {o}, q) = AlgRel(N1 , q)}. Since Alg follows the Randomized Consistency
+Property, AlgSol(N1 ∪ O1 ,Sq) = AlgSol(N1 , q) = S1 . Therefore, f (S1 ) ≥ αf (O1 ). Next,
+let O2 = O ∩ R, where R = ℓi=1 Ri . It holds that f (T ) ≥ αf (O2 ). Let o ∈ O; o is assigned
+to Nc on some machine mc . It holds that,
+
+                         Pr[o ∈ O2 ] = Pr[o ∈ AlgRel(Nc )|o ∈ Nc ]
+                                    = Pr[o ∈ AlgRel(Nc ∪ {o})]
+                                    = 1 − po .
+
+Therefore,
+                                      1
+                            E [f (V )] ≥(E[f (S1 )] + E[f (T )])
+                                      2
+                                      α
+                                     ≥ (E[f (O1 )] + E[f (O2 )])
+                                      2
+                                      α
+                                     ≥ (F (p) + F (1O − p))
+                                      2
+                                      α
+                                     ≥ F (1O ),                                          (3)
+                                      2
+where Inequality 3 follows from Lemma 8 and F is convex.
+
+Corollary 1. Let (f, k) be an instance of SM where k = O (ψ/ℓ).
+                                                                 R-DASH
+                                                                             returns set V
+                         1
+                                                            n log(k)
+with two MR rounds, O ε4 log(k) log (n) adaptive rounds, O      ε4
+                                                                        total queries, O(n)
+communication complexity, and probability at least 1 − n1−2c such that
+                                             1 − 1/e − ε
+                               E[f (V )] ≥               OPT.
+                                                  2
+
+4.2 Greedy-DASH
+Next, we obtain the nearly the optimal ratio by applying LAG and randomized consistency
+to DistributedDistorted proposed by Kazemi et al. (2021). DistributedDistorted is a
+distributed algorithm for regularized submodular maximization that relies upon (a distorted
+version of) the standard greedy algorithm. For SMCC, the distorted greedy algorithm
+reduces to the standard greedy algorithm Greedy. In the following, we show that any
+algorithm that satisfies randomized consistency can be used in place of Greedy as stated
+in Theorem 4. By introducing LAG into DistributedDistorted, G-DASH achieves
+the near optimal (1 − 1/e − ε) expected ratio in ⌈ 1ε ⌉ MapReduce rounds, O(log(n) log(k))
+adaptive rounds, and O(n log(k)) total queries. We also generalize this to any algorithm
+that satisfies randomized consistency.
+
+                                              1592
+                        Scalable Distributed Algorithms for SMCC
+
+
+
+
+Algorithm 5 Greedy-DASH(G-DASH)
+    Input: evaluation oracle f : 2N → R, constraint k, error ε, available machines M ←
+    {1, 2, ..., ℓ}
+ 2: S ← ∅, C0 ← ∅
+    for r ← 1 to ⌈ 1ε ⌉ do
+ 4:     Xr,i ← Elements assigned to machine i chosen uniformly at random in round r
+        Nr,i ← Xr,i ∪ Cr−1
+ 6:     for i ∈ M in parallel do
+             Sr,i , Rr,i ← LAG(f, Nr,i , k, ε)
+ 8:          Send Sr,i , Rr,i to each machine
+        S ← arg max {f (S), f (Sr,1 ), · · · , f (Sr,ℓ )}
+        Cr ← ℓi=1 Rr,i ∪ Cr−1
+             S
+10:
+      return S
+
+The Framework of Kazemi et al. (2021). DistributedDistorted has ⌈1/ε⌉ MR
+rounds where each round r works as follows: First, it distributes the ground set into m
+machines uniformly at random. Then, each machine i runs Greedy (when modular term
+ℓ(·) = 0) on the data Nr,i that combines the elements distributed before each round Xr,i and
+the elements forwarded from the previous rounds Cr−1 to get the solution Sr,i . At the end,
+the final solution, which is the best among Sr,1 and all the previous solutions, is returned.
+To improve the adaptive rounds of DistributedDistorted, we replace standard greedy
+with LAG to get G-DASH.
+Theorem 4. Let (f, k) be an instance of SM where k = O (εψ/ℓ). Alg is a randomized
+algorithm which satisfies the Randomized Consistency Property with α approximation ratio,
+Φ(n) query complexity, and Ψ(n) adaptivity. By replacing LAG with Alg, G-DASH returns
+set S with O (1/ε) MR rounds and 1ε Ψ nℓ adaptive rounds, εℓ Φ nℓ total queries, O nε
+                                                                   
+
+communication complexity such that,
+
+                                       E [f (S)] ≥ (α − ε)OPT.
+
+
+Proof. Query Complexity and Adaptivity. G-DASH operates with ⌈ 1ε ⌉ MR rounds,
+where each MR round calls Alg ℓ times in parallel. As each call of Alg works on the
+ground set with a size of at most nℓ , the total number                          ℓ   n
+                                                                                       
+                                                        of queries for G-DASH is ε Φ ℓ   ,
+                                             1    n
+                                                    
+and the total number of adaptive rounds is ε Ψ ℓ .
+Approximation ratio. Let G-DASH be run with input (f, k, ε, M ). Similar to the analysis
+of Theorem 3, The size of Ni is concentrated. Let O be the optimal solution. For any x ∈ N ,
+define that,
+                     
+                     P rX∼N (1/ℓ),q [x ̸∈ Cr−1 and
+                     
+                r
+               px =       x ∈ AlgRel(X ∪ Cr−1 ∪ {x}, q)] , if x ∈ O .
+                     
+                       0                              , otherwise
+                     
+
+Then we provide the following lemma.
+
+                                                   1593
+                                       Dey, Chen & Kuhnle
+
+
+
+
+                                                                                       r′
+                                                                           Pr
+Lemma 6. For any x ∈ O and 1 ≤ r ≤ 1/ε, P r (x ∈ Cr ) =                         r′ =1 px .
+
+
+Proof.
+                                       r
+                                       X
+                     P r (x ∈ Cr ) =           P r (x ∈ Cr′ \Cr′ −1 )
+                                       r′ =1
+                                       X  r                                
+                                  =            P r x ∈ ∪ℓi=1 Rr′ ,i \Cr′ −1
+                                       r′ =1
+                                          r Xℓ
+                                       X           1                                    
+                                  =                  P r x ∈ Rr′ ,i \Cr′ −1 |x ∈ Nr′ ,i
+                                                   ℓ
+                                       r′ =1 i=1
+                                          r X ℓ
+                                       X           1
+                                  =                  P r (x ̸∈ Cr′ −1 and
+                                                   ℓ
+                                       r′ =1 i=1
+                                                                                              
+                                    x ∈ AlgRel(Xr′ ,i ∪ Cr′ −1 ∪ {x}, q)
+                                     r
+                                           ′
+                                    X
+                                  =     prx
+                                       r′ =1
+
+
+
+
+The rest of the proof bounds f (Sr,1 ) in the following two ways.
+First, let Or,1 = {o ∈ O : o ̸∈ AlgRel (Xr,1 ∪ Cr−1 ∪ {o}, q)}, and Or,2 = (Cr−1 ∩ O) ∪ Or,1 .
+Since Alg follows the Randomized Consistency Property, it holds that AlgSol(Xr,1 ∪
+Cr−1 , q) = AlgSol(Xr,1 ∪ Cr−1 ∪ Or,1 , q) = Sr,1 , and f (Sr,1 ) ≥ αf (Or,2 ). So, for any
+o ∈ O,
+
+         P r (o ∈ Or,2 ) = P r (o ∈ Cr−1 or o ̸∈ AlgRel (Xr,1 ∪ Cr−1 ∪ {o}, q)) = 1 − pro .
+
+Therefore,
+
+                           E [f (Sr,1 )] ≥ αE [f (Or,2 )] ≥ αF (1O − pr ) .                       (4)
+
+
+Second, let Or,3 = Cr−1 ∩ O. Similarly, it holds that f (Sr,1 ) ≥ αf (Or,3 ). And for any o ∈ O,
+by Lemma 6, it holds that,
+                                                                         r−1
+                                                                                    ′
+                                                                         X
+                            P r (o ∈ Or,3 ) = P r (o ∈ Cr−1 ) =                 prx ,
+                                                                        r′ =1
+
+Therefore,
+                                                                        r−1
+                                                                                      !
+                                                                                 r′
+                                                                        X
+                          E [f (Sr,1 )] ≥ αE [f (Or,3 )] ≥ αF                   p         .       (5)
+                                                                        r′ =1
+
+
+                                                      1594
+                     Scalable Distributed Algorithms for SMCC
+
+
+
+
+By Inequalities 4 and 5, we bound the approximation ratio of G-DASH by the following,
+                                  1/ε
+                                  X
+                  E [f (S)] ≥ ε         E [f (Sr,1 )]
+                                  r=1
+                                                                                          
+                                              1/ε−1              1/ε−1                  
+                                                        r′                          r′
+                                               X                 X
+                           ≥ εα · F                   p +             F 1O − p            
+                                               r′ =1             r=1
+                           (a)
+                           ≥ α(1 − ε)F (1O )
+                           ≥ (α − ε)OPT,
+
+where Inequality (a) follows from Lemma 8 and F is convex.
+
+Corollary 2. Let (f, k) be an instance of SM where k = O (εψ/ℓ). G-DASH
+                                                                            returns set S
+                                1
+                                                                  n log(k)
+with O (1/ε) MR round and O ε5 log(k) log(n) adaptive rounds, O       ε5
+                                                                              total queries,
+    n                                                       −1  1−2c
+      
+O ε communication complexity, and probability at least 1 − ε n        such that,
+
+                                  E [f (S)] ≥ (1 − 1/e − ε)OPT.
+
+
+
+5. Threshold-DASH: Two MR-Rounds Algorithm with Improved
+  Theoretical Properties
+In this section, we present a novel (0.375 − ε)-approximate, two MR-rounds algorithm
+Threshold-DASH (T-DASH) that achieves nearly optimal O(log(n)) adaptivity in
+O(n log(k)) total time complexity.
+Description. The T-DASH algorithm (Alg. 6) is a two MR-rounds algorithm that
+runs ThreshSeqMod concurrently on every machine with a specified threshold value of
+αOPT/k. The primary machine then builds up its solution S1 by adding elements with
+ThreshSeqMod from the pool of solutions returned by the other machines. Notice that
+there is a small amount of data duplication as elements of the ground set are not randomly
+partitioned in the same way as in the other algorithms. This version of the algorithm
+requires to know the OPT value; in Appendix E we show how to remove this assumption.
+In Appendix I, we further discuss the similar two MR round algorithm of Liu and Vondrak
+(2019), that provides an improved 1/2-approximation but requires four times the data
+duplication of T-DASH.
+                                                             
+Theorem 5. Let (f, k) be an instance of SM where k = O ψℓ . T-DASH knowing OPT
+returns set T ′ with two MR rounds, O ε13 log (n) adaptive rounds, O εn3 total queries,
+                                                                           
+
+O(n) communication complexity, and probability at least 1 − n−c such that
+                                                   
+                                      ′
+                                              3
+                               E f (T ) ≥        − ε OPT.
+                                               8
+
+
+
+                                                   1595
+                                     Dey, Chen & Kuhnle
+
+
+
+
+Algorithm 6 Threshold-DASH Knowing OPT
+ 1: Input: Evaluation oracle f : 2N → R, constraint k, error ε, available machines
+    M ← {1, 2, ..., ℓ}, and OPT
+ 2: Initialize δ ← 1/(ℓ + 1), q ← a fixed sequence of random bits.
+ 3: Set α ← 38 , (q1 , . . . , qℓ+1 ) ← q
+ 4: for e ∈ N do do
+ 5:     Assign e to each machine independently with probability 1/ℓ
+ 6: for i ∈ M do
+ 7:     ▷ On machine i
+ 8:     Let Ni be the elements assigned to machine i
+ 9:     Si , Ri ← ThreshSeqMod(f, Ni , k, δ, ε, (α + ε)OPT/k, qi )
+10:     if |Si | = k then return T ′ ← Si
+11:     Send Si , Ri to primary machine
+12: ▷ On primary machine
+          Sℓ
+13: R ← i=1 Ri
+14: Let g(·) ← f (S1 ∪ ·) − f (S1 )
+15: T ← ThreshSeqMod(g, R, k − |S1 |, δ, ε, (α + ε)OPT/k, qℓ+1 )
+16: T ′ ← S1 ∪ T
+17: return T ′
+
+Proof. Query Complexity and Adaptivity. T-DASH runs with two MR rounds, where
+the first MR round invokes ThreshSeqMod ℓ times in parallel, and the second MR round
+invokes ThreshSeqMod once. By Theorem 1, each call       of ThreshSeqMod with a ground
+                    n             n
+                                               log(n/ℓ)
+set of size at most ℓ queries O ℓε3 within O       ε3
+                                                           adaptive rounds. The total number
+                                                                           
+of queries is O εn3 , and the total number of adaptive rounds is O log(n)
+                   
+                                                                        ε3
+                                                                              .
+
+Approximation Ratio. In Algorithm 6, there are ℓ + 1 independent calls of ThreshSe-
+qMod. With |Ni | ≥ nc , the success probability of each call of ThreshSeqMod is larger
+              1
+than 1 − nc (ℓ+1) . Thus, Algorithm 6 succeeds with probability larger than 1 − n−c . For
+the remainder of the analysis, we condition on the event that all calls to ThreshSeqMod
+succeed.
+
+In the case that |T ′ | = k, by Theorem                                 3
+                                                                               OPT
+                                           1 in Section 2.1 and  τ =    8 + ε     k , it holds
+that f (T ′ ) ≥ 1−2ε          3
+                                                                                     |T ′ | < k
+                                    
+                1+ε  τ · k ≥  8 − ε   OPT.  Otherwise,  we consider the   case  that
+in the following. Let (TSMSol(N , q), TSMRel(N , q)) be the pair of sets returned by
+ThreshSeqMod(N , q). For any x ∈ N , let
+                        
+                        P rX∼N (1/ℓ),q [TSMRel(X ∪ {x}, q)
+                        
+                   px =                  = TSMRel(X, q)] , if x ∈ O             .
+                        
+                         0                            , otherwise
+                        
+
+
+Let O1 = {o ∈ O : o ̸∈ TSMRel(N1 ∪ {o}, q)}, O2 = R ∩ O. By Randomized Consistency
+Property, it holds that S1 = TSMSol(N1 , q) = TSMSol(N1 ∪ O1 , q). For any o ∈ O1 , o is
+not selected in S1 . Since, |S1 | < k, by Property (4) in Theorem 1, ∆ (o | T ′ ) < ∆ (o | S1 ) < τ.
+
+                                               1596
+                      Scalable Distributed Algorithms for SMCC
+
+
+
+
+Algorithm 7 LinearTime-Distributed
+ 1: Input: Evaluation oracle f : 2N → R, constraint k, error ε, available machines
+    M ← {1, 2, ..., ℓ}
+ 2: for e ∈ N do
+ 3:     Assign e to machine chosen uniformly at random
+ 4: for i ∈ M do
+ 5:     ▷ On machine i
+ 6:     Let Ni be the elements assigned to machine i
+ 7:     Si ← LTC(f, Ni , k, q)
+ 8:     Send Si to primary machine
+ 9: ▷ On primary machine
+                 Sℓ
+10: Gather S ← i=1 Si
+11: T1 ← LTC(f, S, k, q) on machine m1
+12: T1′ ← last k elements in T1
+13: T2 ← ThresholdGreedy (f, T1 , k, ε, f (T1′ ), 1/2)           ▷ Post-Processing
+14: S1′ ← last k elements added to S1
+15: return V ← arg max {f (S1′ ), f (T1′ ), f (T2 )}
+
+
+Also, for any o ∈ O2 \T , o is not selected in T . Similarly, ∆ (o | T ′ ) < τ. Then, we can get,
+
+                      f (O1 ∪ O2 ) − f (T ′ ) ≤ f (O1 ∪ O2 ∪ T ′ ) − f (T ′ )
+                                                                   
+                             X                               3
+                                      ∆ o|T′ ≤ k · τ =
+                                               
+                       ≤                                       + ε OPT.                        (6)
+                                    ′
+                                                             8
+                          o∈O1 ∪O2 \T
+
+Next, we provide the following lemma to complete the rest of the proof.
+
+Lemma 7. For any o ∈ O, it holds that P r (o ∈ O1 ∪ O2 ) ≥ 3/4.
+
+Then, by Lemma 8 in Appendix A, E [f (O1 ∪ O2 )] ≥ 3/4 · F (1O ) = 3/4 · OPT. From this
+and Inequality 6, we can bound theapproximation ratio for Algorithm T-DASH knowing
+OPT by follows, E [f (T ′ )] ≥ 38 − ε OPT.
+
+
+
+6. LinearTime-Distributed (L-Dist)
+In this section, we introduce L-Dist, the first linear time MapReduce algorithm with
+constant approximation. We derive L-Dist from R-DASH by incorporating the analysis
+of LTC (Alg. 3), an algorithm with O(n) query complexity, into the distributed setting.
+This integration allows L-Dist to operate within two MapReduce rounds, demonstrating an
+adaptive complexity of O( nℓ ) and a query complexity of O(n). Also, as stated in Theorem 6,
+it guarantees an approximation ratio of 18 . Additionally, we improve the objective value by
+implementing ThresholdGreedy (Alg. 9 in Appendix D) on the set returned at the second
+MapReduce round. The integration of LTC into LinearTime-Distributed provides
+enhanced capabilities and improves the efficiency of the overall algorithm.
+
+                                               1597
+                                   Dey, Chen & Kuhnle
+
+
+
+
+Description: Initially, L-Dist involves randomly distributing the ground set across all
+machines M . In the first MR round, LinearTime-Distributed applies LTC on each
+machine to obtain Si within O (n/ℓ) query calls. The solutions from all machines are then
+returned to the primary machine, where LTC selects the output solution T1 . By selecting
+the best last k among all solutions, L-Dist ensures a 18 -approximation. Besides returning
+the last k elements of the solution T1 which is an 1/2-approximation of T1 , we employ
+ThresholdGreedy, a (1 − 1/e − ε) approximation algorithm, to boost the objective value.
+We provide the theoretical guarantees of L-Dist as Theorem 6. The proof involves a minor
+modification of the proof provided in Theorem 3.
+                                                         ψ
+Theorem 6. Let (f, k) be an instance of SM where k < ℓ log(ψ) . L-Dist returns a set
+                         n
+                           
+V with two MR rounds, O ℓ adaptive rounds, O (n) total queries, O(n) communication
+complexity such that
+                                            1
+                                 E[f (V )] ≥ OPT.
+                                            8
+
+6.1 Analysis of Query Complexity and Adaptivity
+L-Dist runs with two MR rounds. In the first MR round, LTC is invoked ℓ times in parallel,
+each with O (n/ℓ) queries and O (n/ℓ) adaptive rounds by Theorem 2. So, during the first
+MR round, the number of queries is O (n) and the number of adaptive rounds is O (n/ℓ).
+Then, the second MR round calls LTC and ThresholdGreedy once respectively, handling
+at most n/ℓ elements. By Theorem 2 and 8, the number of queries is O (n/ℓ) and the number
+of adaptive rounds is O (n/ℓ). Consequently, the total number of queries of L-Dist is O (n),
+and the total number of adaptive rounds is O (n/ℓ).
+
+6.2 Analysis of Approximation Ratio
+Let L-Dist be executed with input (f, k, ε, M ). Since ℓ ≤ n1−c , it follows that the expected
+size of each subset |Ni | satisfies E [|Ni |] = n/ℓ ≥ nc . To ensure that the size |Ni | is
+concentrated, we apply Chernoff’s bound. Let N (1/ℓ) denote the random distribution
+over subsets of N where each element is included independently with probability 1/ℓ. Let
+p ∈ [0, 1]n be the following vector. For x ∈ N , let
+                  (
+                    P rX∼N (1/ℓ),q [LTC(X ∪ {x}, q) = LTC(X, q)] , if x ∈ O
+             px =                                                                 .
+                    0                                , otherwise
+
+Consider S1 = LTC(N1 , q) on machine m1 . Let O1 = {o ∈ O : LTC(N1 ∪ {o}, q) =
+LTC(N1 , q)}. By Lemma 5, LTC(N1 ∪ O1 , q) = S1 . Therefore,       by Theorem 2, it holds that
+f (S1′ ) ≥ f (O1 )/4. Next, let O2 = O ∩ S, where S = ℓi=1 Si . Similarly, by Theorem 2, it
+                                                          S
+holds that f (T1′ ) ≥ f (O2 )/4. Let o ∈ O; o is assigned to Nc on some machine mc . It holds
+that,
+
+                           Pr[o ∈ O2 ] = Pr[o ∈ LTC(Nc )|o ∈ Nc ]
+                                      = Pr[o ∈ LTC(Nc ∪ {o})]
+                                      = 1 − po .
+
+
+                                            1598
+                     Scalable Distributed Algorithms for SMCC
+
+
+
+
+Algorithm 8 MED(f, k, M, Alg, q)
+ 1: Input: evaluation oracle f : 2N → R, constraint k, available machines M ← {1, 2, ..., ℓ},
+    MR algorithm Alg, random bits q
+ 2: n ← |N |, Ψ ← Memory capacity (# elements) of primary machine
+ 3: Choose k ′ ← max{k ′ ∈ N : k ′ ≤ Ψ  ℓ}
+               ′
+ 4: m ← ⌈k/k ⌉, (q1 , . . . , qm ) ← q
+ 5: for i ← 1 to m do
+ 6:    Let g(·) ← f (· ∪ Si ) − f (Si )
+ 7:    Ai ← Alg(g, M, min{k ′ , k − |Si |}, qi )
+ 8:    Si+1 ← Si ∪ Ai
+ 9: return Sm
+
+
+Therefore,
+                                    1
+                                      E[f (S1′ )] + E[f (T1′ )]
+                                                               
+                          E [f (V )] ≥
+                                    2
+                                    1
+                                   ≥ (E[f (O1 )/4] + E[f (O2 )/4])
+                                    2
+                                    1
+                                   ≥ (F (p) + F (1O − p))
+                                    8
+                                    1            1
+                                   ≥ F (1O ) = OPT,                                       (7)
+                                    8            8
+where inequality 7 follows from Lemma 8 and F is convex.
+
+6.3 Post-Processing
+In this algorithm, we employ a simple post-processing procedure. Since T1′ is an 1/2−approximation
+of T1 with size k, T1′ is also an 1/2−approximation of the instance (f, k) on the ground set
+T1 . By running any linear time algorithm that has a better approximation ratio on T1 , we
+are able to boost the objective value returned by the algorithm with the same theoretical
+guarantees. By Theorem 8, ThresholdGreedy achieves (1 − 1/e − ε)−approximation
+in linear time with a guess on the optimal solution. Therefore, with input α = 1/2 and
+Γ = f (T1′ ), utilizing ThresholdGreedy can effectively enhance the objective value.
+
+
+7. Towards Larger k: A Memory-Efficient, Distributed Framework (MED)
+In this section, we propose a general-purpose plug-in framework for distributed algorithms,
+MemoryEfficientDistributed (MED, Alg. 8). MED increases the largest possible
+constraint value from O(n/ℓ2 ) to O(n/ℓ) in the value oracle model. Under some additional
+assumptions, we remove all restrictions on the constraint value.
+As discussed in Section 1, the k value is limited to a fraction of the machine memory for
+MapReduce algorithms: k ≤ O(n/ℓ2 ), since those algorithms need to merge a group of
+solutions and pass it to a single machine. MED works around this limitation as follows:
+MED can be thought of as a greedy algorithm that uses an approximate greedy selection
+through Alg. One machine manages the partial solutions {Si }, built up over m iterations.
+
+                                            1599
+                                      Dey, Chen & Kuhnle
+
+
+
+
+In this way, each call to Alg is within the constraint restriction of Alg, i.e. O(n/ℓ2 ), but a
+larger solution of up to size O(n/ℓ) can be constructed.
+The restriction on k of MED of O(n/ℓ) comes from passing the data of the current solution
+to the next round. Intuitively, if we can send some auxiliary information about the function
+instead of the elements selected, the k value can be unrestricted.
+Assumption 1. Let f be a set function with ground set N of size n. If for all S ⊆ N , there
+exists a bitvector vS , such that the function g(X) = f (S ∪ X) − f (S) can be computed from
+X and vS , then f satisfies Assumption 1.
+We show in Appendix F that all four applications evaluated in Section 8 satisfy   P Assumption 1.
+As an example, consider MaxCover, which can be expressed as f (S) = i∈N fi (S), where
+fi (S) = 1{i is covered by S} . Let gi (X) = fi (S ∪ X) − fi (S), and vS = (f1 (S), . . . , fn (S)).
+Then, fi (S ∪ X) = 1{i is covered by S} ∨ 1{i is covered by X} , where thePfirst term is given by vS
+and the second term is calculated by X. Therefore, since g(X) = i∈N gi (X), g(X) can be
+computed from X and vS .
+Theorem 7. Let (f, k) be an instance of SMCC distributed over ℓ machines. For generic
+objectives, where the data of current solution need to be passed to the next round, k ≤
+min{ ℓψ−n
+       ℓ−1 + 1, ψ − ℓ + 1}; for special objectives, where only one piece of compressed data
+need to be passed to the next round, k ≤ n. Let Sm be the set returned by MED. Then
+E [f (Sm )] ≥ (1 − e−γ )OPT, where γ is the expected approximation of Alg.
+
+Proof. Let O be an optimal and O1 , O2 , ..., Om be a partition of O into m pieces, each of
+size ≤ k ′ . Also ∀i fˆi is monotone SMCC since f is monotone SMCC.
+
+
+                       E [f (Si+1 ) − f (Si )|Si ] = E [f (Si ∪ Ai ) − f (Si )|Si ]
+                                                       h            i
+                                                   = E fˆi (Ai )|Si
+                                                  (a)     m
+                                                    1 X ˆ
+                                                  ≥    γ fi (Oj )
+                                                    m
+                                                         j=1
+                                                   γ
+                                                  ≥ fˆi (O)
+                                                   m
+                                                   γ
+                                                  = (f (Si ∪ O) − f (Si ))
+                                                   m
+                                                   γ
+                                                  ≥ (OP T − f (Si )),
+                                                   m
+where Inequality (a) follows from fˆi is SMCC; Alg is γ-approximation. Unfix Si , it holds
+that
+                                               γ
+                    OP T − E [f (Si+1 )] ≤ 1 −      [OP T − E [f (Si )]]
+                                               m
+                                               γ i
+                                                  
+                                          ≤ 1−       [OP T − f (∅)]
+                                               m
+                                               γ i
+                                          = 1−       · OP T
+                                               m
+
+                                                  1600
+                      Scalable Distributed Algorithms for SMCC
+
+
+
+
+                                  Table 2: Environment Setup
+                                                    Number of
+                                      Number of                                Dataset Size
+      Experiment                                    Threads Per
+                                      Machines (ℓ)*                                (n)
+                                                    Machine (Υ )
+      Experiment 1 (Fig. 2)                8             4                      10K - 100K
+      Experiment 2 (Fig. 3)               64            32                       1M - 5M
+      Experiment 3 (Fig. 4(a))             8             4                         3M
+      Experiment 3 (Fig. 4(b))             8             4                        100K
+      Experiment 4 (Fig. 5)               32             1                        100K
+       *
+         Prior MR (greedy) algorithms were assessed using ℓ · Υ machines, utilizing each thread as
+         an individual core. Thus, all algorithms were configured to use all available cores.
+       ‡
+         We kept a variant of R-DASH evaluated on 8 machines (with 4 cores each) as a baseline.
+         All other algorithms use 2 machines (with 4 cores each).
+
+
+                                               h           γ i
+                               ∴ E [f (Sm )] ≥ 1 − (1 − )m · OP T
+                                                          m
+                                             ≥ (1 − e−γ ) · OP T
+
+To analyze the memory requirements of MED, consider the following. To compute g(·) ←
+f (· ∪ Si ) − f (Si ), the current solution Si need to be passed to each machine in M for the
+next call of Alg. Suppose |S| = k − x where 1 ≤ x ≤ k. The size of data stored on any
+non-primary machine in cluster M , as well as on the primary machine of M can be bounded
+as follows:
+                      k − x + (n − k + x)/ℓ ≤ Ψ      k ≤ (ℓΨ − n)/(ℓ − 1) + 1
+                                                  ⇒                           .
+                      k − x + (kℓ)/m ≤ Ψ             k ≤Ψ−ℓ+1
+Therefore, if Ψ ≥ 2n/ℓ, MED can run since ℓ ≤ n/ℓ in our MapReduce model. Under the
+alternative assumption, it is clear that MED can run for all k ≤ n.
+
+
+8. Empirical Evaluation
+This section presents empirical comparison of R-DASH, T-DASH, G-DASH, L-Dist to the
+state-of-the-art distributed algorithms. Distributed algorithms include RandGreeDI (RG)
+of Barbosa et al. (2015) and DistributedDistorted (DDist) of Kazemi et al. (2021).
+Environment. Our experiments utilized diverse computational setups. Experiments 1,
+and 3 employed an eight-machine cluster, each with four CPU cores, totaling 32 cores.
+Experiment 2 was conducted on a larger 64-machine cluster, each featuring 32 CPU cores.
+Experiment 4 operated on a cluster of 32 single-core machines. Notably, in Experiment 1,
+our algorithms used ℓ = 8 machines, while prior MapReduce (MR) algorithms employed
+ℓ = 32, fully utilizing 32 cores. MPICH version 3.3a2 was installed on every machine, and
+we used the python library mpi4py for implementing and parallelizing all algorithms with
+the Message Passing Interface (MPI). These algorithms were executed using the mpirun
+command, with runtime tracked using mpi4py.M P I.W time() at the algorithm’s start and
+completion.
+
+                                                1601
+                                        Dey, Chen & Kuhnle
+
+
+
+
+Datasets. Table 2 presents dataset sizes for our experiments. In Experiment 1 and 3
+(Fig. 4(b)), we assess algorithm performance on small datasets, varying from n = 10,000
+to 100,000. These sizes enable evaluation of computationally intensive algorithms, such
+as DDist, T-DASH, and G-DASH. Experiment 2, 3 (Fig. 4(a)), and 4 focus on larger
+datasets, ranging from n = 50,000 to 5 million.
+Applications. We evaluated image summarization (ImageSumm), influence maximization
+(InfMax), revenue maximization (RevMax) and maximum coverage (MaxCover). Details are
+provided in Appendix F.1.
+Experiment Objectives. The primary objective of our experiment set is to comprehensively
+evaluate the practicality of the distributed algorithms across varying cluster and dataset
+sizes. The specific objectives of each experiment are outlined below:
+   • Experiment 11 : Baseline experiment aimed at assessing the performance of the algo-
+     rithms using small datasets and cluster setup.
+   • Experiment 2: Assess the performance of the algorithms on large datasets and cluster
+     setup.
+   • Experiment 3∗ : Investigate the influence of the number of nodes in a cluster on
+     algorithm performance.
+   • Experiment 4: Examine the impact of increasing cardinality constraints on the perfor-
+     mance of MED.
+
+8.1 Experiment 1 - Comparative Analysis on Small Datasets
+The results of Experiment 1 (Fig. 2) show that all algorithms provide similar solution values
+(with T-DASH being a little worse than the others). However, there is a large difference in
+runtime, with R-DASH the fastest by orders of magnitude. The availability of only 4 threads
+per machine severely limits the parallelization of T-DASH, resulting in longer runtime;
+access to log 1+ε (k) threads per machine should result in faster runtime than R-DASH.
+
+8.2 Experiment 2 - Performance Analysis of R-DASH, RandGreeDI and L-Dist
+    on a Large Cluster
+This section presents a comparative analysis of R-DASH, L-Dist, and RandGreeDI on a
+large 64-node cluster, each node equipped with 32 cores. We assess two versions of L-Dist
+and RandGreeDI, one with ℓ = 64 and the other with ℓ = 2048, with a predetermined time
+limit of 3 hours for each application. The plotted results depict the instances completed by
+each algorithm within this time constraint.
+In terms of solution quality, as depicted in Figure 3(a), statistically indistinguishable
+results, while L-Dist exhibits an average drop of 9% in solution quality across completed
+instances. Examining runtime (Figure 3(d)), R-DASH consistently outperforms L-Dist and
+RandGreeDI by orders of magnitude. As discussed in Experiment 3, for both L-Dist and
+RandGreeDI, instances with fewer distributions (ℓ = 64) display faster runtimes compared
+   1
+       Results published in Thirty-Seventh AAAI Conference on Artificial Intelligence, AAAI 2023
+
+
+                                                   1602
+                                                             Scalable Distributed Algorithms for SMCC
+
+
+
+                                    ImageSumm (n = 10000)                                        InfluenceMax (n = 26588)                               RevenueMax (n = 17432)                      MaxCover(BA) (n = 100000)
+                              1.0                                                                                                              1.8                                                  5
+
+
+
+
+                                                                          Objective (×102)
+
+
+
+
+                                                                                                                            Objective (×104)
+
+
+
+
+                                                                                                                                                                                 Objective (×104)
+           Objective (×104)
+                                                                                             8
+                              0.8
+                                                                                                                                               1.6
+                              0.6                     RG                                                                                                                                            4
+                                                                                             6                                                 1.4
+                                                      DDist
+                              0.4                     R-DASH
+                                                      T-DASH                                 4                                                 1.2
+                              0.2                                                                                                                                                                   3
+                                                      G-DASH
+                              0.0                                                                                                              1.0
+                                        200            400                                           200         400                                        200        400                                 200             400
+                                                  k                                                          k                                                     k                                               k
+
+                                         (a)                                                            (b)                                                  (c)                                              (d)
+                                  ImageSumm (n = 10000)                                          InfluenceMax (n = 26588)                               RevenueMax (n = 17432)                          MaxCover(BA) (n = 100000)
+
+                 104
+                                                               Time Taken (s)
+
+
+
+
+                                                                                                                            Time Taken (s)
+
+
+
+
+                                                                                                                                                                                 Time Taken (s)
+Time Taken (s)
+
+
+
+
+                                                                                                                                               103
+                 103                                                            103
+                                                                                                                                                                                                    103
+                              2                                                                                                                     2
+                 10                                                                                                                            10
+                                                                                102
+                                                                                                                                                                                                    102
+                 101
+                                                                                             1                                                      1
+                                                                                10                                                             10
+
+                                      200             400                                            200         400                                        200        400                                   200            400
+                                              k                                                              k                                                     k                                                   k
+
+                                       (e)                                                             (f)                                                   (g)                                                 (h)
+
+Figure 2: Performance comparison of distributed algorithms on ImageSumm, InfluenceMax,
+          RevenueMax and MaxCover; RandGreeDI (RG) is run with Greedy as the
+          algorithm Alg (Barbosa et al., 2015) to ensure the 12 (1 − 1/e) ratio. All Greedy
+          implementations used lazy greedy to improve the runtime. T imeout for each
+          application: 6 hours per algorithm.
+
+to instances using a larger setup (ℓ = 2048), attributed to k values surpassing ℓn2 (≃ 0.27
+for InfMax). The subsequent experiment demonstrates how MED effectively addresses this
+challenge. Comparing the fastest variant of each algorithm, we observe that for the smallest
+k values, RandGreeDI outperforms L-Dist. However, as k increases, RandGreeDI’s
+runtime linearly grows, while L-Dist’s runtime remains unaffected due to its linear time
+complexity, enabling L-Dist to outperform RandGreeDI for larger constraints.
+
+8.3 Experiment 3 - Scalability Assessment
+Figure 4(a) illustrates a linear speedup for R-DASH as the number of machines ℓ increases.
+Figure 4(b) highlights an intriguing observation that, despite having sufficient available
+memory, increasing ℓ can result in inferior performance when k > ℓn2 . Specifically, as depicted
+in Figure 4(b), we initially witness the expected faster execution of RandGreeDI with ℓ = 32
+compared to RandGreeDI with ℓ = 8. However, once k > 32n2 , the relative performance
+of RandGreeDI with ℓ = 32 rapidly deteriorates. This decline can be attributed to the
+degradation of RandGreeDI’s optimal performance beyond k = ℓn2 .
+When running RandGreeDI with a single thread on each machine, the total running time
+on ℓ machines can be computed based on two components. First, the running time for one
+machine in the first MR round, which is proportional to (n/ℓ − (k − 1)/2)k. Second, the
+running time for the primary machine in the second MR round (post-processing step), which
+
+                                                                                                                       1603
+                                      Dey, Chen & Kuhnle
+
+
+
+
+              (a)                            (b)                            (c)
+
+
+
+
+              (d)                             (e)                           (f)
+
+Figure 3: Empirical comparison of R-DASH and L-Dist. The plotted metrics are solution
+          value (Fig. 3(a)-3(c)) and runtime (Fig. 3(d)-3(f)).
+
+
+
+
+                                (a)                             (b)
+
+Figure 4: (a): Scalability of R-DASH vs. ℓ (b): RandGreeDI with ℓ = 8 Vs. ℓ = 32.
+
+is proportional to (kℓ − (k − 1)/2)k. Consequently, the total running
+                                                                    p time is proportional to
+nk/ℓ + ℓk 2 − k(k − 1). Optimal performance is achieved when ℓ = n/k, which justifies the
+preference for parallelization within a machine to maintain a lower ℓ rather than distributing
+the data across separate processors.
+
+
+Furthermore, in Experiment 5 (Section 8.4), we demonstrate that utilizing MED enables
+MR algorithms to produce solutions much faster with no compromise in solution value,
+particularly when solving for k > ℓn2 . These results provide further support for the advantage
+of incorporating MED in achieving efficient and effective parallelization in MR algorithms.
+
+                                             1604
+                     Scalable Distributed Algorithms for SMCC
+
+
+
+
+              (a)                            (b)                           (c)
+
+
+
+
+              (d)                            (e)                           (f)
+
+Figure 5: Empirical comparison of MED+RG to RandGreeDI. The plotted metrics are
+          solution value (Fig. 5(a)-5(c)) and runtime (Fig. 5(d)-5(f)).
+
+8.4 Experiment 4 - Performance Analysis of MED
+This section presents experimental results comparing the performance of MED+RG and the
+vanilla RandGreeDI algorithm. In terms of solution value, MED+RG consistently provides
+nearly identical solutions to the vanilla RandGreeDI algorithm across all instances for the
+three applications studied. Regarding runtime, the following observations are made: Initially,
+both algorithms exhibit similar execution times up to a threshold of k = ℓn2 . However,
+beyond this threshold, the performance gap between MED+RG and RandGreeDI widens
+linearly. MED+RG achieves notable average speedup factors of 1.8, 2.2, and 2.3 over
+RandGreeDI for the respective applications. Moreover, beyond k = ℓn2 , MED+RG
+outperforms RandGreeDI in terms of completing instances within a 12-hour timeout,
+completing 77% more instances of k across all three applications. These findings highlight
+the promising performance of MED+RG, demonstrating comparable solution values while
+significantly improving runtime efficiency compared to the vanilla RandGreeDI algorithm.
+
+
+The empirical findings from this experiment provide insights into the capabilities of the
+MED+Alg framework. Our results indicate that MED+Alg achieves solution quality that
+is practically indistinguishable from the vanilla Alg algorithm, even for significantly larger
+values of k. Additionally, even with sufficient available memory to run Alg beyond k = ℓn2 ,
+MED+Alg demonstrates noteworthy computational efficiency, surpassing that of the Alg
+algorithm. This combination of comparable solution quality and improved computational
+efficiency positions MED+Alg as a highly promising framework. These findings have
+significant implications and underscore the potential of MED+Alg to address complex
+problems in a distributed setting with large-scale values of k.
+
+                                            1605
+                                    Dey, Chen & Kuhnle
+
+
+
+
+9. Discussion and Conclusion
+Prior to this work, no MR algorithms for SMCC could parallelize within a machine; these
+algorithms require many sequential queries. Moreover, increasing the number of machines to
+the number of threads available in the cluster may actually harm the performance, as we
+showed empirically; intuitively, this is because the size of the set on the primary machine
+scales linearly with the number of machines ℓ. In this paper, we have addressed this limitation
+by introducing a suite of algorithms that are both parallelizable and distributed. Specifically,
+we have presented R-DASH, T-DASH, and G-DASH, which are the first MR algorithms
+with sublinear adaptive complexity (highly parallelizable). Moreover, our algorithms make
+have nearly linear query complexity over the entire computation. We also provide the first
+distributed algorithm with O(n) total query complexity, improving on the O(npolylog(n))
+of our other algorithms and the algorithm of Liu and Vondrak (2019).
+
+When RandGreeDI was introduced by Mirzasoleiman et al. (2013), the empirical perfor-
+mance of the algorithm was emphasized, with theoretical guarantees unproven until the
+work of Barbosa et al. (2015). Since that time, RandGreeDI has remained the most
+practical algorithm for distributed SMCC. Our R-DASH algorithm may be regarded as a
+version of RandGreeDI that is 1) parallelized; 2) nearly linear time in total (RandGreeDI
+is quadratic); and 3) empirically orders of magnitude faster in parallel wall time in our
+evaluation.
+
+R-DASH achieves approximation ratio of (1 − 1/e)/2 in two MR rounds; the first round
+merely being to distribute the data. We provide G-DASH to close the gap to (1 − 1/e)
+ratio in a constant number of rounds. However, MR rounds are expensive (as shown by our
+Experiment 1). The current best ratio achieved in two rounds is the 0.545-approximation
+algorithm of Mirrokni and Zadimoghaddam (2015). Therefore, a natural question for future
+research is what is the best ratio achievable in two MR rounds. Moreover, non-monotone
+or partially monotone objective functions and more sophisticated constraint systems are
+directions for future research.
+
+
+Acknowledgements
+Yixin Chen and Tonmoy Dey contributed equally to this work. The work of Tonmoy Dey
+was partially supported by Florida State University; the work of Yixin Chen and Alan
+Kuhnle was partially supported by Texas A & M University. The authors have received no
+third-party funding in direct support of this work. The authors have no additional revenues
+from other sources related to this work.
+
+
+Appendix A. Lovász Extension of Submodular Function.
+Given submodular function f , the Lovász extension F of f is defined as follows: For
+z ∈ [0, 1]|N | ,
+                         F (z = (zi )i∈N ) = Eλ∼U [0,1] [f ({i : zi ≥ λ})].
+
+                                               1606
+                       Scalable Distributed Algorithms for SMCC
+
+
+
+
+The Lovász extension satisfies the following properties: (1) F is convex; (2) F (cz) ≥ cF (z)
+for any c ∈ (0, 1). Moreover, we will require the following simple lemma:
+Lemma 8 (Barbosa et al. (2015)). Let S be a random set, and suppose E[1S ] = c · z, for
+c ∈ (0, 1). Then E[f (S)] ≥ c · F (z).
+
+
+Appendix B. Probability Lemma and Concentration Bounds
+Lemma 9. (Chen et al. (2021)) Suppose there is a sequence of n Bernoulli trials: X1 , X2 , . . . , Xn ,
+where the success probability of Xi depends on the results of the preceding trials X1 , . . . , Xi−1 .
+Suppose it holds that
+                     P r (Xi = 1|X1 = x1 , X2 = x2 , . . . , Xi−1 = xi−1 ) ≥ η,
+where η > 0 is a constant and x1 , . . . , xi−1 are arbitrary.
+Then, if Y1 , . . . , Yn are independent Bernoulli trials, each with probability η of success, then
+                                      n                     n
+                                              !                     !
+                                     X                    X
+                                Pr      Xi ≤ b ≤ P r          Yi ≤ b ,
+                                   i=1                     i=1
+
+where b is an arbitrary integer.
+Moreover, let A be the first occurrence of success in sequence Xi . Then,
+                                            E [A] ≤ 1/η.
+
+Lemma 10 (Chernoff bounds (Mitzenmacher & Upfal, 2017)). Suppose X1 ,P... , Xn are
+independent
+     Pn     binary random variables such that P r (Xi = 1) = pi . Let µ = ni=1 pi , and
+X = i=1 Xi . Then for any δ ≥ 0, we have
+                                                                 δ2 µ
+                                   P r (X ≥ (1 + δ)µ) ≤ e− 2+δ .                                (8)
+Moreover, for any 0 ≤ δ ≤ 1, we have
+                                                                 δ2 µ
+                                   P r (X ≤ (1 − δ)µ) ≤ e− 2 .                                  (9)
+
+
+Appendix C. Omitted Proof of ThreshSeqMod
+Lemma 2. At an iteration j, let Ai = {x ∈ Vj : ∆ (x | Ti ∪ Sj−1 ) < τ } after Line 5. It holds
+that |A0 | = 0, |A|Vj | | = |Vj | and |Ai | ≤ |Ai+1 |.
+
+Proof. After filtration on Line 5, it holds that, for any x ∈ Vj , ∆ (x | Sj−1 ) ≥ τ and
+∆ (x | Vj ∪ Sj−1 ) = 0. Therefore,
+                       |A0 | = |{x ∈ Vj : ∆ (x | Sj−1 ) < τ }| = 0,
+                       |A|Vj | | = |{x ∈ Vj : ∆ (x | Vj ∪ Sj−1 ) < τ }| = |Vj |.
+For any x ∈ Ai , it holds that ∆ (x | Ti ∪ Sj−1 ) < τ . Due to submodularity, ∆ (x | Ti+1 ∪ Sj−1 ) ≤
+∆ (x | Ti ∪ Sj−1 ) < τ . Therefore, Ai is subset of Ai+1 , which indicates that |Ai | ≤ |Ai+1 |.
+
+                                                 1607
+                                            Dey, Chen & Kuhnle
+
+
+
+
+Proof of Success Probability. The algorithm successfully terminates if, at some point, |Vj | =
+0 or |Sj | = k. To analyze the success probability, we consider a variant of the algorithm
+in which it does not terminate once |Vj | = 0 or |Sj | = k. In this case, the algorithm keeps
+running with s = 0 and selecting empty set after inner for loop in the following iterations.
+Thus, with probability 1, either |Vj+1 | = 0 ≤ (1 − βε)|Vj | = 0, or |Sj | = k. Lemma 3 holds
+for all M + 1 iterations of the outer for loop.
+
+If the algorithm fails, there should be no more than m = ⌈log1−βε (1/n)⌉ successful iterations
+where λ∗j ≥ min{s, t}. Otherwise, by Lemma 3, there exists an iteration j such that |Sj | = k,
+or |VM +1 | < n (1 − βε)m ≤ 1. Let X be the number of successful iterations. Then, X is
+the sum of M + 1 dependent Bernoulli random variables, where each variable has a success
+probability of more than 1/2. Let Y be the sum of M + 1 independent Bernoulli random
+variables with success probability 1/2. By probability lemmata, the failure probability of
+Alg. 1 is calculated as follows,
+
+              P r (Alg. 1 fails) ≤ P r (X ≤ m)
+                                     ≤ P r (Y ≤ m)                                             (Lemma 9)
+                                                  n      
+                                     ≤ P r Y ≤ log     /(βε)                     (log(x) ≥ 1 − x1 , ∀x > 0)
+                                                    δ
+                                                        2
+                                                    1
+                                         − 12 1− 2(1+βε)    ·2(1+1/βε) log( n
+                                                                            δ)
+                                     ≤e                                                       (Lemma 10)
+                                         (2βε+1)2
+                                        δ 4βε(βε+1)   δ
+                                     =              ≤
+                                        n             n
+
+Proof of Adaptivity and Query Complexity. In Alg. 1, oracle queries incurred on Line 5
+and 14, and can be done in parallel. Thus, there are constant number of adaptive rounds
+within one iteration of the outer for loop. The adaptivity is O (M ) = O log(n/δ)/ε3 .
+                                                                                    
+
+Consider an iteration j, there are no more than |Vj−1 |+1 queries on Line 5 and log1+ε (|Vj |)+2
+queries on Line 14. Let Yi be the i−th successful iteration. Then, for any Yi−1 < j ≤ Yi , it
+holds that |Vj | ≤ n(1 − βε)i−1 . By Lemma 9, for any i ≥ 1, E [Yi − Yi−1 ] ≤ 2. Then, the
+expected number of oracle queries is as follows,
+
+                         M
+                         X +1
+                                                              
+   E [#queries] ≤               E |Vj−1 | + log1+ε (|Vj |) + 3
+                          j=1
+                    X
+                                E [Yi − Yi−1 ] n(1 − βε)i−1 + log1+ε n(1 − βε)i−1
+                                                                                       
+    ≤n+                                                                                     + 3(M + 1)
+             i:n(1−βε)i−1 ≥1
+                X
+    ≤ n + 2n            (1 − βε)i−1 + 2 log1+ε (n) · log1−βε (1/n) + 3 log(n/δ)/ε3
+                i≥1
+                   
+               2
+    ≤       1+          n + 2 log1+ε (n) · log1−βε (1/n) + 3 log(n/δ)/ε3
+               βε
+    ≤ O(n/ε3 )
+
+
+
+                                                       1608
+                            Scalable Distributed Algorithms for SMCC
+
+
+
+
+Algorithm 9 ThresholdGreedy
+ 1: Input: Evaluation oracle f : 2N → R, constraint k, constant α, value Γ s.t. Γ ≤ f (O) ≤
+    Γ/α, error ε
+ 2: Initialize τ ← Γ/(αk), S ← ∅
+ 3: while τ ≥ εΓ/k do
+ 4:     for e ∈ N do
+ 5:         if ∆ (e | S) ≥ τ then S ← S ∪ {e}
+ 6:         if |S| = k then return S
+ 7:     τ ← τ (1 − ε)
+ 8: return S
+
+Proof of Property (3). For each iteration j, consider two cases of λ∗j by the choice of λ∗j on
+Line 18. Firstly, if λ∗j ≤ 1ε , clearly,
+                           
+
+                                                 
+                                     ∆ Tλ∗j | Sj−1 ≥ (1 − ε)τ λ∗j .
+
+                                          n               o
+Secondly, if λ∗j >                                      ∗ . Then, B[λ ] = True, and
+                        1
+                         ε , let λj = max  λ ∈ Λ : λ < λj            j
+
+                                                 
+                                     ∆ Tλj | Sj−1 ≥ (1 − ε)τ λj .
+
+Let λj = ⌊(1 + ε)u ⌋, and λ∗j = (1 + ε)u+1 . Then,
+                                         
+
+
+                     |Tj,λj |   λj    ⌊(1 + ε)u ⌋    (1 + ε)u − 1    1
+                               = ∗ =               ≥              ≥     − ε,
+                     |Tj,λ∗j |  λj   ⌊(1 + ε)u+1 ⌋    (1 + ε)u+1    1+ε
+
+where the last inequality follows from (1 + ε)u+1 ≥ λ∗j >
+                                                                 1
+                                                                     ε   ≥ 1ε . Therefore, by above two
+inequalities and monotonicity of f ,
+                                                                
+                                                         1
+                                                              − ε τ λ∗j ≥ (1 − 2ε)τ λ∗j /(1 + ε).
+                                          
+   ∆ Tj,λ∗j | Sj−1 ≥ ∆ Tj,λj | Sj−1 ≥ (1 − ε)
+                                                          1+ε
+
+The objective value of the returned solution can be bounded as follows,
+                    X                 X
+          f (S) =        ∆ Tλ∗j | Sj−1 ≥  (1 − 2ε)τ λ∗j /(1 + ε) = (1 − 2ε)τ |S|/(1 + ε).
+                    j                         j
+
+
+
+
+Proof of Property (4). If the output set S follows that |S| < k, for any x ∈ N , it is filtered
+out at some point. Let x be discarded at itetation jx . Then,
+
+                                  ∆ (x | S) ≤ ∆ (x | Sjx −1 ) < τ.
+
+                                                  1609
+                                   Dey, Chen & Kuhnle
+
+
+
+
+Appendix D. ThresholdGreedy
+In this section, we introduce a variant of near-linear time algorithm (Alg. 1) in Badanidiyuru
+and Vondrak (2014), ThresholdGreedy (Alg. 9), which requires two more parameters,
+constant α and value Γ. With the assumption that Γ is an α−approximation solution,
+ThresholdGreedy ensures a (1 − 1/e − ε)−approximation with O(n/ε) query calls.
+Theorem 8. Let (f, k) be an instance of SM, and O is the optimal solution to (f, k). With
+input α, Γ and ε, where Γ ≤ f (O) ≤ Γ/α, ThresholdGreedy outputs solution S with
+O(nε−1 log(αε)−1 ) queries such that f (S) ≥ (1 − 1/e − ε)f (O).
+
+Proof. Query Complexity. The while loop in Alg. 9 has at most log1−ε (αε) ≤ ε−1 log(αε)−1
+iterations. For each iteration of the while loop, there are O(n) queries. Therefore, the query
+complexity of ThresholdGreedy is O(nε−1 log(αε)−1 ).
+Approximation Ratio. If |S| < k at termination, for any e ∈ N \ S, it holds that
+∆ (e | S) < εΓ/k ≤ εf (O)/k. Then,
+                                          (1)    X
+                           f (O) − f (S) ≤              ∆ (o | S) ≤ εf (O)
+                                                o∈O\S
+
+                         ⇒ f (S) ≥ (1 − ε)f (O)
+
+where Inequality (1) follows from monotonicity and submodularity.
+If |S| = k at termination, let Sj be the intermediate solution after iteration j of the while
+loop, and τj is the corresponding threshold. Suppose that Sj \ Sj−1 ̸= ∅. Then, each element
+added during iteration j provides a minimum incremental benefit of τ ,
+
+                              f (Sj ) − f (Sj−1 ) ≥ |Sj \ Sj−1 |τj .
+
+Next, we consider iteration j − 1. If j > 1, since the algorithm does not terminate during
+iteration j − 1, each element in N is either added to the solution or omitted due to small
+marginal gain with respect to the current solution. Therefore, for any o ∈ O \ Sj−1 , it holds
+that ∆ (o | Sj−1 ) < τj−1 by submodularity. Then,
+                                    X
+               f (O) − f (Sj−1 ) ≤        ∆ (o | Sj−1 ) < kτj−1 = kτj /(1 − ε).
+                                  o∈O\Sj−1
+
+If j = 1, τj = Γ/(αk) and Sj−1 = ∅.
+
+                    f (O) − f (Sj−1 ) = f (O) ≤ Γ/α = kτj < kτj /(1 − ε).
+
+Therefore, for any iteration j that has elements being added to the solution, it holds that
+                                                          
+                                           1−ε
+                   f (O) − f (Sj ) ≤ 1 −       |Sj \ Sj−1 | (f (O) − f (Sj−1 ))
+                                            k
+                                    Y        1−ε
+                                                               
+               ⇒ f (O) − f (S) ≤         1−        |Sj \ Sj−1 | f (O)
+                                               k
+                                      j
+
+
+                                                1610
+                       Scalable Distributed Algorithms for SMCC
+
+
+
+
+                            Table 3: Small and Large Data
+                                  Small Data              Large Data
+               Application
+                              n        Edges         n         Edges
+               ImageSumm      10,000   ≃ 1.0 × 108   50,000    ≃ 2.5 × 109
+          .                                      5
+               InfluenceMax   26,588   ≃ 1.0 × 10    1,134,890 ≃ 6.0 × 106
+               RevenueMax     17,432   ≃ 1.8 × 105 3,072,441 ≃ 2.3 × 108
+               MaxCover (BA) 100,000 ≃ 5.0 × 105 1,000,000 ≃ 1.0 × 109
+                                         Y         1−ε
+                                    ≤          e− k |Sj \Sj−1 | f (O)                  (x + 1 ≤ ex )
+                                          j
+                                          −1+ε
+                                    =e           f (O) ≤ (1/e + ε)f (O)                    (0 < ε < 1)
+
+                          ⇒             f (S) ≥ (1 − 1/e − ε)f (O)
+
+
+
+Appendix E. Threshold-DASH with no Knowledge of OPT
+Lemma 7. For any o ∈ O, it holds that P r (o ∈ O1 ∪ O2 ) ≥ 3/4.
+
+Proof. By Definition (px in Section 5), it holds that P r (o ∈ O1 ) = po . Since o is assigned
+to each machine randomly with probability 1/ℓ,
+
+                                         ℓ
+                                         X
+                       P r (o ∈ O2 ) =         P r (o ∈ Si )
+                                         i=1
+                                    = ℓ · P r (o ∈ S1 |o ∈ N1 ) · P r (o ∈ N1 )
+                                    = P r (o ∈ TSMRel(N1 )|o ∈ N1 )
+                                    = P r (o ∈ TSMRel(N1 ∪ {o}))
+                                    = 1 − po .
+
+Moreover, we know that any two machines selects elements independently. So,
+
+              P r (o ∈ O2 |o ∈ O1 ) = P r (o ∈ O2 |o ̸∈ TSMRel(N1 ∪ {o}, q))
+                                  = 1 − P r (o ̸∈ O2 |o ̸∈ TSMRel(N1 ∪ {o}, q))
+                                           ℓ
+                                           Y
+                                  =1−            P r (o ̸∈ Si |o ̸∈ TSMRel(N1 ∪ {o}, q))
+                                           i=1
+                                             ℓ
+                                  (a)       Y
+                                  = 1−             P r (o ̸∈ Si )
+                                             i=2
+                                  ≤ 1 − P r (o ̸∈ O2 )
+                                  = P r (o ∈ O2 ) = 1 − po ,
+
+where Inequality (a) follows from P r (o ̸∈ TSMRel(N1 )|o ̸∈ TSMRel(N1 ∪ {o})) = 1.
+
+                                                     1611
+                                      Dey, Chen & Kuhnle
+
+
+
+
+Thus, we can bound the probability by the following,
+                         P r (o ∈ O1 ∪ O2 ) =P r (o ∈ O1 ) + P r (o ∈ O1 )
+                                                − P r (o ∈ O1 ∩ O2 )
+                                             ≥po + 1 − po − po (1 − po )
+                                             ≥3/4.
+
+
+
+Description. The T-DASH algorithm described in Alg. 10 is a two MR-rounds algorithm
+using the AFD approach that runs ThreshSeqMod concurrently on every machine for
+                                                              α∆∗
+log 1+ε (k) different guesses of threshold τi,j in the range [ k i , α∆∗i ]; where α is the approxi-
+mation of T-DASH and ∆∗i is the maximum singleton in Ni . Every solution returned to the
+primary machine are placed into bins based on their corresponding threshold guess τi,j such
+        ∗                     ∗
+that ∆k (1 + ε)x ≤ τi,j ≤ ∆k (1 + ε)x+1 ; where ∆∗ is the maximum singleton in N . Since
+there must exist a threshold τ ∗ that is close enough to αOPT/k ; running ThreshSeqMod
+                                           ∗
+(Line 21) on every bin in the range [ α∆          ∗
+                                          k , α∆ ] and selecting the best solution guarantees
+the α-approximation of T-DASH in O(log (n)) adaptive rounds.
+Theorem 9. Let (f, k) be an instance of SM where k log(k) < εψ     ℓ . T-DASH with no
+                                     ′                         1
+knowledge of OPT returns set T with two MR rounds, O ε3 log(n) adaptive rounds,
+          
+O n log(k)
+      ε 4    total queries, O(n) communication complexity, and probability at least 1 − n−c
+such that                                         
+                                      ′
+                                             3
+                                 E f (T ) ≥     − ε OPT.
+                                              8
+
+Overview of Proof. Alg. 10 is inspired by Alg. 6 in Section 5, which is a version of the
+algorithm that knows that optimal solution value. With ∆∗ = max{f (e) : e ∈ N }, there
+exists an x0 such that τx0 ≤ αOPT(1 + ε)/k ≤ τx0 +1 with O (log(k)/ε) guesses. Then,
+on each machine i, we only consider sets Si,j and Ri,j such that τx0 ≤ τi,j ≤ τx0 +1 . If
+this τi,j does exist, (Si,j , Ri,j ) works like (Si , Ri ) in Alg. 6. If this τi,j does not exist, then
+for any e ∈ Ni , it holds that f (e) < αOPT/k, which means ThreshSeqMod(Ni ) with
+τ = αOPT/k will return an empty set. Since each call of ThreshSeqMod with different
+guesses on τ is executed in parallel, the adaptivity remains the same and the query complexity
+increases by a factor of log(k)/ε.
+
+Proof. First, for x = 0, τx = (α + ε)∆∗ /k ≤ (α + ε)OPT/k; and for x = ⌈log1+ε (k)⌉ + 1,
+                                                X
+       τx ≥ (α + ε)(1 + ε)∆∗ ≥ (α + ε)(1 + ε)      f (o)/k ≥ (α + ε)(1 + ε)OPT/k.
+                                                     o∈O
+
+Therefore, there exists an x0 such that τx0 ≤ (α + ε)(1 + ε)OPT/k ≤ τx0 +1 . Since
+τx0 +1 = τx0 (1 + ε), it holds that τx0 ≥ (α + ε)OPT/k and τx0 +1 ≤ (α + ε)(1 + ε)2 OPT/k.
+Then, we only consider Tx′ 0 . If |Tx′ 0 | = k, by Theorem 1, it holds that,
+                                                                  
+                                      ′       1 − 2ε          3
+                     f (T ) ≥ f (Tx0 ) ≥             τx k ≥     − ε OPT.
+                                              1+ε 0           8
+
+                                                1612
+                          Scalable Distributed Algorithms for SMCC
+
+
+
+
+Algorithm 10 Threshold-DASH with no knowledge of OPT (T-DASH)
+ 1: Input:    Evaluation oracle f : 2N → R, constraint k, error ε, available machines
+    M ← {1, 2, ..., ℓ}
+ 2: Initialize δ ← 1/(ℓ + 1), q ← a fixed sequence of random bits.
+ 3: Set α ← 38 , (qi,j )i∈[ℓ+1],j∈[log1+ε (k)] ← q
+ 4: for e ∈ N do do
+ 5:     Assign e to each machine independently with probability 1/ℓ
+ 6: for i ∈ M do
+ 7:     ▷ On machine i
+ 8:     Let Ni be the elements assigned to machine i
+ 9:     Set ∆∗i ← max{f (e) : e ∈ Ni }
+10:     for j ← 0 to log1+ε (k) in parallel do
+                    (α+ε)∆∗
+11:        τi,j ←      k
+                          i
+                            (1 + ε)j
+12:        Si,j , Ri,j ← ThreshSeqMod(f, Ni , k, δ, ε, τj , qi,j )
+13:    Send ∆∗i and all (τi,j , Si,j , Ri,j ) to primary machine
+14: ▷ On primary machine
+15: Set ∆∗ ← max{∆∗i : 1 ≤ i ≤ ℓ}
+16: for x ← 0 to ⌈log1+ε (k)⌉ + 1 in parallel do
+                      ∗
+17:    τx ← (α+ε)∆
+                 k S(1 + ε)
+                             x
+
+18:    Let Rx ← { Ri,j : τx ≤ τi,j ≤ τx+1 }
+19:    Let Ax ← {Sample a solution Si,j : τx ≤ τi,j ≤ τx+1 }
+20:    Let gx (·) ← f (Ax ∪ ·) − f (Ax )
+21:    Tx ← ThreshSeqMod(gx , Rx , k − |Ax |, δ, ε, τx , qℓ+1,x )
+22:    Tx′ ← Ax ∪ Tx
+23: T ← arg max{f (Tx′ ) : 0 ≤ x ≤ log1+ε (k)}
+24: return T
+
+Otherwise, in the case that |Tx′ 0 | < k, let Ax0 = Si0 ,j0 , O1 = {o ∈ O : o ̸∈ TSMRel(Ni0 ∪
+{o}, q)}. Also, let τi,(j0 ) be returned by machine i that τx0 ≤ τi,(j0 ) ≤ τx0 +1 , define
+                                    (
+               ′          ′          (Si,(j0 ) , Ri,(j0 ) ) , if machine i returned a τi,(j0 )
+             (Si,(j 0)
+                       , Ri,(j0)
+                                 )=                                                            .
+                                     (∅, ∅)                 , otherwise
+
+On the machine which does not return a τi,(j0 ) , we consider it runs ThreshSeqMod(Ni , τx0 +1 )
+and returns two empty sets, and hence max{f (e) : e ∈ Ni } < τx0 . Let Rx′ 0 = ∪i∈M Ri,(j′
+                                                                                            0)
+                                                                                               ,
+       ′
+O2 = Rx0 ∩ O. Then, Lemma 7 in Appendix E still holds in this case. We can calculate the
+approximation ratio as follows with ε ≤ 2/3,
+
+                            E [T ] ≥ E Tx′ 0 ≥ E [f (O1 ∪ O2 )] − k · τx0 +1
+                                       
+                                                      
+                                                 3
+                                             ≥      − ε OPT.
+                                                 8
+
+
+
+
+                                                   1613
+                                   Dey, Chen & Kuhnle
+
+
+
+
+Appendix F. Experiment Setup
+F.1 Applications
+Given a constraint k, the objectives of the applications are defined as follows:
+
+F.1.1 Max Cover
+Maximize the number of nodes covered by choosing a set S of maximum size k, such
+that the number of nodes having at least one neighbour in the set S. The application is
+run on synthetic random BA graphs of groundset size 100,000, 1,000,000 and 5,000,000
+generated using Barabási–Albert (BA) models for the centralized and distributed experiments
+respectively.
+
+F.1.2 Image Summarization on CIFAR-10 Data
+Given large collection of images, find a subset of maximum size k which is representative
+of the entire collection. The objective used for the experiments is a monotone variant of
+the image summarization from Fahrbach, Mirrokni, and Zadimoghaddam (2019a). For a
+groundset with N images, it is defined as follows:
+                                               X
+                                     f (S) =         max si,j
+                                                      j∈S
+                                               i∈N
+
+
+where si,j is the cosine similarity of the pixel values between image i and image j. The data
+for the image summarization experiments contains 10,000 and 50,000 CIFAR-10 (Krizhevsky,
+Hinton, et al., 2009) color images respectively for the centralized and distributed experiments.
+
+F.1.3 Influence Maximization on a Social Network.
+Maximise the aggregate influence to promote a topic by selecting a set of social network
+influencers of maximum size k. The probability that a random user i will be influenced by
+the set of influencers in S is given by:
+
+                           fi (S) = 1   , for i ∈ S
+                           fi (S) = 1 − (1 − p)|NS (i)|     , for i ∈
+                                                                    /S
+
+
+where —NS (i)— is the number of neighbors of node i in S. We use the Epinions data set
+consisting of 27,000 users from Rossi and Ahmed (2015) for the centralized data experiments
+and the Youtube online social network data Yang and Leskovec (2012) consisting more than
+1 million users for distrbuted data experiments. The value of p is set to 0.01.
+
+F.1.4 Revenue Maximization on YouTube.
+Maximise revenue of a product by selecting set of users S of maximum size k, where the
+network neighbors will be advertised a different product by the set of users S. It is based on
+the objective function from Mirzasoleiman, Badanidiyuru, and Karbasi (2016). For a given
+set of users X and wi,j as the influence between user i and j, the objective function can be
+
+                                               1614
+                     Scalable Distributed Algorithms for SMCC
+
+
+
+
+defined by:
+                                                         
+                                           X       X
+                                 f (S) =         V  wi,j 
+                                           i∈X         j∈S
+                                            α
+                                V (y) = y
+where V (S), the expected revenue from an user is a function of the sum of influences from
+neighbors who are in S and α : 0 < α < 1 is a rate of diminishing returns parameter for
+increased cover.
+We use the Youtube data set from Mirzasoleiman et al. (2016) consisting of 18,000 users for
+centralized data experiments. For the distrbuted data experiments we perform empirical
+evaluation on the Orkut online social network data from Yang and Leskovec (2012) consisting
+more than 3 million users. The value of α is set to 0.3
+
+
+Appendix G. Replicating the Experiment Results
+Our experiments can be replicated by running the following scripts:
+   • Install MPICH version 3.3a2 (DO NOT install OpenMPI and ensure mpirun utlizes
+     mpich using the command mpirun –version (Ubuntu))
+   • Install pandas, mpi4py, scipy, networkx
+   • Set up an MPI cluster using the following tutorial:
+     https://mpitutorial.com/tutorials/running-an-mpi-cluster-within-a-lan/
+   • Create and update the host file ../nodesFileIPnew to store the ip addresses of all the
+     connected MPI machines before running any experiments (First machine being the
+     primary machine)
+        – NOTE: Please place nodesFileIPnew inside the MPI shared repository; ”cloud/”
+          in this case (at the same level as the code base directory). DO NOT place it
+          inside the code base ”DASH-Distributed SMCC-python/” directory.
+   • Clone the DASH-Distributed SMCC-python repository inside the MPI shared repository
+     (/cloud in the case using the given tutorial)
+        – NOTE: Please clone the ”DASH-Distributed SMCC-python” repository and exe-
+          cute the following commands on a machine with sufficient memory (RAM);
+          capable of generating the large datasets. This repository NEED NOT be the
+          primary repository (”/cloud/DASH-Distributed SMCC-python/”) on the shared
+          memory of the cluster; that will be used for the experiments.
+   • Additional Datasets For Experiment 1 : Please download the Image Similarity Matrix
+     file ”images 10K mat.csv”(https://drive.google.com/file/d/1s9PzUhV-C5dW8iL4tZPVjSRX4PBhrsiJ/v
+     and place it in the data/data exp1/ directory.
+   • To generate the decentralized data for Experiment 2 and 3 : Please follow the below
+     steps:
+
+                                                1615
+                                   Dey, Chen & Kuhnle
+
+
+
+
+        – Execute bash GenerateDistributedData.bash nThreads nNodes
+        – The previous command should generate nNodes directories in loading data/
+          directory (with names machine<nodeNo>Data)
+        – Copy the data exp2 split/ and data exp3 split/ directories within each machine<i>Data
+          directory to the corresponding machine Mi and place the directories outside /cloud
+          (directory created after setting up an MPI cluster using the given tutorial)).
+To run all experiments in the apper
+Please read the README.md file in the ”DASH-Distributed SMCC-python” (Code/Data
+Appendix) for detailed information.
+
+
+Appendix H. The Greedy Algorithm (Nemhauser and Wolsey (1978))
+The standard Greedy algorithm starts with an empty set and then proceeds by adding
+elements to the set over k iterations. In each iteration the algorithm selects the element with
+the maximum marginal gain ∆(e|Ai−1 ) where ∆(i|A) = f (A ∪ {i}) − f (A). The Algorithm
+11 is a formal statement of the standard Greedy algorithm. The intermediate solution
+set Ai represents the solution after iteration i. The (1 − 1/e ≈ 0.632)-approximation of the
+Greedy algorithm is the optimal ratio possible for monotone objectives.
+
+Algorithm 11 Greedy(f, N , k)
+ 1: Input: evaluation oracle f : 2N → R, constraint k
+ 2: Let Ai ← ∅
+ 3: for i = 1 to kdo
+ 4:    ui ← arg max{f (e|Ai−1 ); where e ∈ N nAi−1 }
+ 5:    Ai ← Ai−1 ∪ ui
+ 6: return Ak
+
+
+
+
+Appendix I. Discussion of the 1/2-approximate Algorithm in Liu and
+ Vondrak (2019)
+
+Algorithm 12 ThresholdGreedy(S, G, τ )
+ 1: Input: An input set S, a partial greedy solution G with G ≤ k, and a threshold τ
+ 2: G′ ← G
+ 3: for e ∈ S do
+ 4:    if ∆ (e | G0 ) ≥ τ and |G0 | < k then
+ 5:        G0 ← G0 ∪ {e}
+ 6: return G′
+
+The simple two-round distributed algorithm proposed by Liu and Vondrak (2019) achieves a
+deterministic 1/2 − ε approximation ratio. The pseudocode of this algorithm, assuming that
+we know OPT, is provided in Alg. 14. The guessing OPT version runs O (log(k)) copies of
+Alg. 14 on each machine, which has O (k) adaptivity and O (nk log(k)) query complexity.
+
+                                             1616
+                       Scalable Distributed Algorithms for SMCC
+
+
+
+
+Algorithm 13 ThresholdFilter(S, G, τ )
+ 1: Input: An input set S, a partial greedy solution G with G ≤ k, and a threshold τ
+ 2: S ′ ← S
+ 3: for e ∈ S do
+ 4:     if ∆ (e | G) < τ then S ′ ← S ′ \ {e}
+ 5: return S ′
+
+
+Algorithm 14 A simple 2-round 1/2 approximation, assuming OPT is known
+ 1: round 1:                                            p
+ 2: S ← sample each e ∈ N with probability p = 4 k/n
+ 3: send S to each machine and the central machine C
+ 4: partition N randomly into sets V1 , V2 , . . . , Vm
+ 5: send Vi to machine i for each i ∈ [m]
+ 6: for each machine Mi (in parallel) do
+ 7:    τ ← OPT2k
+ 8:    G0 ← ThresholdGreedy(S, ∅, τ )
+ 9:    if |G0 | < k then
+10:        Ri ← ThresholdFilter(Vi , G0 , τ )
+11:    else
+12:        Ri = ∅
+13:    send Ri to the central machine C
+
+14: round 2 (only on C):
+15: compute G0 from S as in first round
+16: for e ∈ ∪i Ri do
+17:    if ∆ (e | G) ≥ τ then G ← G ∪ {e}
+18: return G
+
+Intuitively, the result of Alg. 14 is equivalent to a single run of ThresholdGreedy on
+the whole ground set. Within the first round, it calls ThresholdGreedy on S to get an
+intermediate solution G0 . After filtering out the elements with gains less than τ in Vi , the
+rest of the elements in Vi are sent to the primary machine. By careful analysis, there is a
+high probability
+      √           that the total number of elements returned within the first round is less
+than nk.
+
+Compared to the 2-round algorithms in Table 1, Alg. 14 is the only algorithm that requires
+data duplication, with four times more elements distributed to each machine in the first
+round. As a result, distributed setups have a more rigid memory restriction when running
+this algorithm. For example, when the dataset exactly fits into the distributed setups which
+follows that Ψ = n/ℓ, there is no more space on each machine to store the random subset S.
+In the meantime, other 2-round algorithms can still run with k ≤ n/ℓ2 .
+
+Additionally, since the approximation analysis of Alg. 14 does not take randomization
+into consideration, we may be able to substitute its ThresholdGreedy subroutine with
+any threshold algorithm (such as ThresholdSeq in Chen et al. (2021)) that has optimal
+
+                                            1617
+                                   Dey, Chen & Kuhnle
+
+
+
+
+logarithmic adaptivity and linear query complexity. However, given its analysis of the success
+probability considers S as 3k blocks where each block has random access to the whole ground
+set, it may not be easy to fit parallelizable threshold algorithms into this framework.
+
+
+References
+Badanidiyuru, A., & Vondrak, J. (2014). Fast algorithms for maximizing submodular
+    functions. In Chekuri, C. (Ed.), Proceedings of the Twenty-Fifth Annual ACM-SIAM
+    Symposium on Discrete Algorithms, SODA 2014, Portland, Oregon, USA, January
+    5-7, 2014, pp. 1497–1514. SIAM.
+
+Balakrishnan, R., Li, T., Zhou, T., Himayat, N., Smith, V., & Bilmes, J. A. (2022). Diverse
+     client selection for federated learning via submodular maximization. In The Tenth
+     International Conference on Learning Representations, ICLR 2022, Virtual Event,
+     April 25-29, 2022. OpenReview.net.
+
+Balkanski, E., Rubinstein, A., & Singer, Y. (2019). An exponential speedup in parallel
+     running time for submodular maximization without loss in approximation. In Chan,
+     T. M. (Ed.), Proceedings of the Thirtieth Annual ACM-SIAM Symposium on Discrete
+     Algorithms, SODA 2019, San Diego, California, USA, January 6-9, 2019, pp. 283–302.
+     SIAM.
+
+Balkanski, E., & Singer, Y. (2018). The adaptive complexity of maximizing a submodular
+     function. In Diakonikolas, I., Kempe, D., & Henzinger, M. (Eds.), Proceedings of the
+     50th Annual ACM SIGACT Symposium on Theory of Computing, STOC 2018, Los
+     Angeles, CA, USA, June 25-29, 2018, pp. 1138–1151. ACM.
+
+Barbosa, R. d. P., Ene, A., Nguyen, H. L., & Ward, J. (2015). The power of randomization:
+     Distributed submodular maximization on massive datasets. In Bach, F. R., & Blei,
+     D. M. (Eds.), Proceedings of the 32nd International Conference on Machine Learning,
+     ICML 2015, Lille, France, 6-11 July 2015, Vol. 37 of JMLR Workshop and Conference
+     Proceedings, pp. 1236–1244. JMLR.org.
+
+Barbosa, R. d. P., Ene, A., Nguyen, H. L., & Ward, J. (2016). A new framework for distributed
+     submodular maximization. In Dinur, I. (Ed.), IEEE 57th Annual Symposium on
+     Foundations of Computer Science, FOCS 2016, 9-11 October 2016, Hyatt Regency,
+     New Brunswick, New Jersey, USA, pp. 645–654. IEEE Computer Society.
+
+Blelloch, G. E., Simhadri, H. V., & Tangwongsan, K. (2012). Parallel and I/O efficient set
+      covering algorithms. In Blelloch, G. E., & Herlihy, M. (Eds.), 24th ACM Symposium
+      on Parallelism in Algorithms and Architectures, SPAA ’12, Pittsburgh, PA, USA, June
+      25-27, 2012, pp. 82–90. ACM.
+
+Breuer, A., Balkanski, E., & Singer, Y. (2020). The FAST algorithm for submodular maxi-
+     mization. In Proceedings of the 37th International Conference on Machine Learning,
+     ICML 2020, 13-18 July 2020, Virtual Event, Vol. 119 of Proceedings of Machine
+     Learning Research, pp. 1134–1143. PMLR.
+
+                                            1618
+                    Scalable Distributed Algorithms for SMCC
+
+
+
+
+Buchbinder, N., Feldman, M., Naor, J., & Schwartz, R. (2014). Submodular maximization
+    with cardinality constraints. In Chekuri, C. (Ed.), Proceedings of the Twenty-Fifth
+    Annual ACM-SIAM Symposium on Discrete Algorithms, SODA 2014, Portland, Oregon,
+    USA, January 5-7, 2014, pp. 1433–1452. SIAM.
+Buchbinder, N., Feldman, M., & Schwartz, R. (2017). Comparing apples and oranges: Query
+     trade-off in submodular maximization. Math. Oper. Res., 42 (2), 308–329.
+Calinescu, G., Chekuri, C., Pal, M., & Vondrak, J. (2007). Maximizing a submodular set
+     function subject to a matroid constraint (extended abstract). In Fischetti, M., &
+     Williamson, D. P. (Eds.), Integer Programming and Combinatorial Optimization, 12th
+     International IPCO Conference, Ithaca, NY, USA, June 25-27, 2007, Proceedings, Vol.
+     4513 of Lecture Notes in Computer Science, pp. 182–196. Springer.
+Chekuri, C., & Quanrud, K. (2019). Submodular function maximization in parallel via the
+    multilinear relaxation. In Chan, T. M. (Ed.), Proceedings of the Thirtieth Annual
+    ACM-SIAM Symposium on Discrete Algorithms, SODA 2019, San Diego, California,
+    USA, January 6-9, 2019, pp. 303–322. SIAM.
+Chen, Y., Dey, T., & Kuhnle, A. (2021). Best of both worlds: Practical and theoretically
+     optimal submodular maximization in parallel. In Ranzato, M., Beygelzimer, A.,
+     Dauphin, Y. N., Liang, P., & Vaughan, J. W. (Eds.), Advances in Neural Information
+    Processing Systems 34: Annual Conference on Neural Information Processing Systems
+    2021, NeurIPS 2021, December 6-14, 2021, virtual, pp. 25528–25539.
+Chen, Y., & Kuhnle, A. (2024). Practical and parallelizable algorithms for non-monotone
+     submodular maximization with size constraint. J. Artif. Intell. Res., 79, 599–637.
+Chierichetti, F., Kumar, R., & Tomkins, A. (2010). Max-cover in map-reduce. In Rappa, M.,
+     Jones, P., Freire, J., & Chakrabarti, S. (Eds.), Proceedings of the 19th International
+     Conference on World Wide Web, WWW 2010, Raleigh, North Carolina, USA, April
+     26-30, 2010, pp. 231–240. ACM.
+Dey, T., Chen, Y., & Kuhnle, A. (2023). DASH: A distributed and parallelizable algorithm
+     for size-constrained submodular maximization. In Williams, B., Chen, Y., & Neville,
+     J. (Eds.), Thirty-Seventh AAAI Conference on Artificial Intelligence, AAAI 2023,
+     Thirty-Fifth Conference on Innovative Applications of Artificial Intelligence, IAAI
+     2023, Thirteenth Symposium on Educational Advances in Artificial Intelligence, EAAI
+     2023, Washington, DC, USA, February 7-14, 2023, pp. 3941–3948. AAAI Press.
+Ene, A., & Nguyen, H. L. (2019). Submodular maximization with nearly-optimal approxi-
+     mation and adaptivity in nearly-linear time. In Chan, T. M. (Ed.), Proceedings of the
+     Thirtieth Annual ACM-SIAM Symposium on Discrete Algorithms, SODA 2019, San
+     Diego, California, USA, January 6-9, 2019, pp. 274–282. SIAM.
+Ene, A., & Nguyen, H. L. (2020). Parallel algorithm for non-monotone dr-submodular
+     maximization. In Proceedings of the 37th International Conference on Machine Learn-
+     ing, ICML 2020, 13-18 July 2020, Virtual Event, Vol. 119 of Proceedings of Machine
+     Learning Research, pp. 2902–2911. PMLR.
+
+                                           1619
+                                  Dey, Chen & Kuhnle
+
+
+
+
+Epasto, A., Mirrokni, V. S., & Zadimoghaddam, M. (2017). Bicriteria distributed submodular
+     maximization in a few rounds. In Scheideler, C., & Hajiaghayi, M. T. (Eds.), Proceedings
+     of the 29th ACM Symposium on Parallelism in Algorithms and Architectures, SPAA
+     2017, Washington DC, USA, July 24-26, 2017, pp. 25–33. ACM.
+Ettinger, S., Cheng, S., Caine, B., Liu, C., Zhao, H., Pradhan, S., Chai, Y., Sapp, B., Qi,
+     C. R., Zhou, Y., Yang, Z., Chouard, A., Sun, P., Ngiam, J., Vasudevan, V., McCauley,
+     A., Shlens, J., & Anguelov, D. (2021). Large scale interactive motion forecasting
+     for autonomous driving : The waymo open motion dataset. In 2021 IEEE/CVF
+     International Conference on Computer Vision, ICCV 2021, Montreal, QC, Canada,
+     October 10-17, 2021, pp. 9690–9699. IEEE.
+Fahrbach, M., Mirrokni, V. S., & Zadimoghaddam, M. (2019a). Non-monotone submodular
+     maximization with nearly optimal adaptivity and query complexity. In Chaudhuri,
+     K., & Salakhutdinov, R. (Eds.), Proceedings of the 36th International Conference on
+     Machine Learning, ICML 2019, 9-15 June 2019, Long Beach, California, USA, Vol. 97
+     of Proceedings of Machine Learning Research, pp. 1833–1842. PMLR.
+Fahrbach, M., Mirrokni, V. S., & Zadimoghaddam, M. (2019b). Submodular maximization
+     with nearly optimal approximation, adaptivity and query complexity. In Chan, T. M.
+     (Ed.), Proceedings of the Thirtieth Annual ACM-SIAM Symposium on Discrete Al-
+     gorithms, SODA 2019, San Diego, California, USA, January 6-9, 2019, pp. 255–273.
+     SIAM.
+Gupta, A., Roth, A., Schoenebeck, G., & Talwar, K. (2010). Constrained non-monotone
+    submodular maximization: Offline and secretary algorithms. In Saberi, A. (Ed.),
+    Internet and Network Economics - 6th International Workshop, WINE 2010, Stanford,
+    CA, USA, December 13-17, 2010. Proceedings, Vol. 6484 of Lecture Notes in Computer
+    Science, pp. 246–257. Springer.
+Joseph, K. J., R, V. T., Singh, K., & Balasubramanian, V. N. (2019). Submodular batch
+     selection for training deep neural networks. In Kraus, S. (Ed.), Proceedings of the
+     Twenty-Eighth International Joint Conference on Artificial Intelligence, IJCAI 2019,
+     Macao, China, August 10-16, 2019, pp. 2677–2683. ijcai.org.
+Kazemi, E., Minaee, S., Feldman, M., & Karbasi, A. (2021). Regularized submodular
+    maximization at scale. In Meila, M., & Zhang, T. (Eds.), Proceedings of the 38th
+    International Conference on Machine Learning, ICML 2021, 18-24 July 2021, Virtual
+    Event, Vol. 139 of Proceedings of Machine Learning Research, pp. 5356–5366. PMLR.
+Kazemi, E., Mitrovic, M., Zadimoghaddam, M., Lattanzi, S., & Karbasi, A. (2019). Sub-
+    modular streaming in all its glory: Tight approximation, minimum memory and low
+    adaptive complexity. In Chaudhuri, K., & Salakhutdinov, R. (Eds.), Proceedings of
+    the 36th International Conference on Machine Learning, ICML 2019, 9-15 June 2019,
+    Long Beach, California, USA, Vol. 97 of Proceedings of Machine Learning Research,
+    pp. 3311–3320. PMLR.
+Krizhevsky, A., Hinton, G., et al. (2009). Learning multiple layers of features from tiny
+     images. In University of Toronto, Canada. Citeseer.
+
+                                            1620
+                     Scalable Distributed Algorithms for SMCC
+
+
+
+
+Kuhnle, A. (2021). Quick streaming algorithms for maximization of monotone submodular
+    functions in linear time. In Banerjee, A., & Fukumizu, K. (Eds.), The 24th International
+    Conference on Artificial Intelligence and Statistics, AISTATS 2021, April 13-15, 2021,
+    Virtual Event, Vol. 130 of Proceedings of Machine Learning Research, pp. 1360–1368.
+    PMLR.
+Kumar, R., Moseley, B., Vassilvitskii, S., & Vattani, A. (2013). Fast greedy algorithms
+    in mapreduce and streaming. In Blelloch, G. E., & Vöcking, B. (Eds.), 25th ACM
+   Symposium on Parallelism in Algorithms and Architectures, SPAA ’13, Montreal, QC,
+   Canada - July 23 - 25, 2013, pp. 1–10. ACM.
+Lee, J., Mirrokni, V. S., Nagarajan, V., & Sviridenko, M. (2009). Non-monotone submodular
+      maximization under matroid and knapsack constraints. In Mitzenmacher, M. (Ed.),
+      Proceedings of the 41st Annual ACM Symposium on Theory of Computing, STOC
+      2009, Bethesda, MD, USA, May 31 - June 2, 2009, pp. 323–332. ACM.
+Liu, P., & Vondrak, J. (2019). Submodular optimization in the mapreduce model. In Fineman,
+      J. T., & Mitzenmacher, M. (Eds.), 2nd Symposium on Simplicity in Algorithms, SOSA
+      2019, January 8-9, 2019, San Diego, CA, USA, Vol. 69 of OASIcs, pp. 18:1–18:10.
+      Schloss Dagstuhl - Leibniz-Zentrum für Informatik.
+Liu, S. (2020). A review for submodular optimization on machine scheduling problems. In
+      Du, D., & Wang, J. (Eds.), Complexity and Approximation - In Memory of Ker-I Ko,
+      Vol. 12000 of Lecture Notes in Computer Science, pp. 252–267. Springer.
+Liu, Y., Chong, E. K. P., Pezeshki, A., & Zhang, Z. (2020). Submodular optimization
+     problems and greedy strategies: A survey. Discret. Event Dyn. Syst., 30 (3), 381–412.
+Mao, J., Niu, M., Jiang, C., Liang, H., Chen, J., Liang, X., Li, Y., Ye, C., Zhang, W., Li, Z.,
+     Yu, J., Xu, C., & Xu, H. (2021). One million scenes for autonomous driving: ONCE
+     dataset. In Vanschoren, J., & Yeung, S. (Eds.), Proceedings of the Neural Information
+     Processing Systems Track on Datasets and Benchmarks 1, NeurIPS Datasets and
+     Benchmarks 2021, December 2021, virtual.
+Mirrokni, V. S., & Zadimoghaddam, M. (2015). Randomized composable core-sets for
+     distributed submodular maximization. In Servedio, R. A., & Rubinfeld, R. (Eds.),
+     Proceedings of the Forty-Seventh Annual ACM on Symposium on Theory of Computing,
+     STOC 2015, Portland, OR, USA, June 14-17, 2015, pp. 153–162. ACM.
+Mirzasoleiman, B., Badanidiyuru, A., & Karbasi, A. (2016). Fast constrained submodular
+     maximization: Personalized data summarization. In Balcan, M., & Weinberger, K. Q.
+     (Eds.), Proceedings of the 33nd International Conference on Machine Learning, ICML
+     2016, New York City, NY, USA, June 19-24, 2016, Vol. 48 of JMLR Workshop and
+     Conference Proceedings, pp. 1358–1367. JMLR.org.
+Mirzasoleiman, B., Badanidiyuru, A., Karbasi, A., Vondrak, J., & Krause, A. (2015). Lazier
+     than lazy greedy. In Bonet, B., & Koenig, S. (Eds.), Proceedings of the Twenty-Ninth
+     AAAI Conference on Artificial Intelligence, January 25-30, 2015, Austin, Texas, USA,
+     pp. 1812–1818. AAAI Press.
+
+                                             1621
+                                 Dey, Chen & Kuhnle
+
+
+
+
+Mirzasoleiman, B., Jegelka, S., & Krause, A. (2018). Streaming non-monotone submodular
+     maximization: Personalized video summarization on the fly. In McIlraith, S. A.,
+     & Weinberger, K. Q. (Eds.), Proceedings of the Thirty-Second AAAI Conference
+     on Artificial Intelligence, (AAAI-18), the 30th innovative Applications of Artificial
+     Intelligence (IAAI-18), and the 8th AAAI Symposium on Educational Advances in
+     Artificial Intelligence (EAAI-18), New Orleans, Louisiana, USA, February 2-7, 2018,
+     pp. 1379–1386. AAAI Press.
+Mirzasoleiman, B., Karbasi, A., Sarkar, R., & Krause, A. (2013). Distributed submodular
+     maximization: Identifying representative elements in massive data. In Burges, C.
+     J. C., Bottou, L., Ghahramani, Z., & Weinberger, K. Q. (Eds.), Advances in Neural
+     Information Processing Systems 26: 27th Annual Conference on Neural Information
+     Processing Systems 2013. Proceedings of a meeting held December 5-8, 2013, Lake
+     Tahoe, Nevada, United States, pp. 2049–2057.
+Mitzenmacher, M., & Upfal, E. (2017). Probability and computing: Randomization and
+     probabilistic techniques in algorithms and data analysis. Cambridge university press.
+Nemhauser, G. L., & Wolsey, L. A. (1978). Best algorithms for approximating the maximum
+    of a submodular set function. Math. Oper. Res., 3 (3), 177–188.
+Nemhauser, G. L., Wolsey, L. A., & Fisher, M. L. (1978). An analysis of approximations for
+    maximizing submodular set functions - I. Math. Program., 14 (1), 265–294.
+Rangwani, H., Jain, A., Aithal, S. K., & Babu, R. V. (2021). S3 vaada: Submodular
+    subset selection for virtual adversarial active domain adaptation. In 2021 IEEE/CVF
+    International Conference on Computer Vision, ICCV 2021, Montreal, QC, Canada,
+    October 10-17, 2021, pp. 7496–7505. IEEE.
+Rossi, R. A., & Ahmed, N. K. (2015). The network data repository with interactive graph
+      analytics and visualization. In Bonet, B., & Koenig, S. (Eds.), Proceedings of the
+     Twenty-Ninth AAAI Conference on Artificial Intelligence, January 25-30, 2015, Austin,
+     Texas, USA, pp. 4292–4293. AAAI Press.
+Yang, J., & Leskovec, J. (2012). Defining and evaluating network communities based on
+     ground-truth. In Zaki, M. J., Siebes, A., Yu, J. X., Goethals, B., Webb, G. I., & Wu,
+     X. (Eds.), 12th IEEE International Conference on Data Mining, ICDM 2012, Brussels,
+     Belgium, December 10-13, 2012, pp. 745–754. IEEE Computer Society.
+
+
+
+
+                                          1622
+

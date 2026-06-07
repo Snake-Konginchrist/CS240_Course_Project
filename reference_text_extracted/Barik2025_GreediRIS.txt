@@ -1,0 +1,884 @@
+                                                    Journal of Parallel and Distributed Computing 198 (2025) 105037
+
+                                                                      Contents lists available at ScienceDirect
+
+
+                                           Journal of Parallel and Distributed Computing
+                                                            journal homepage: www.elsevier.com/locate/jpdc
+
+
+
+
+  GreediRIS: Scalable i­fluence maximization using distributed streaming
+  maximum cover
+  Reet Barik a, , Wade Cappa a, , S.M. Ferdous b , Marco Minutoli b , Mahantesh Halappanavar b,a ,
+  Ananth Kalyanaraman a,b,                    ,∗
+
+  a Washington State University, 99164, WA, USA
+  b Pacific Northwest National Laboratory, Richland, 99354, WA, USA
+
+
+
+
+  A R T I C L E            I N F O                         A B S T R A C T
+
+  Keywords:                                                I­fluence maximization—the problem of identifying a subset of 𝑘 i­fluential seeds (vertices) in a network-
+  Distributed i­fluence maximization                       is a classical problem in network science with numerous applications. The problem is NP-hard, but there
+  Distributed submodular maximization                      exist eﬃcient polynomial time approximations. However, scaling these algorithms still remain a daunting task
+  Streaming maximum 𝑘-cover
+                                                           due to the complexities associated with steps involving stochastic sampling and large-scale aggregations. In
+  Parallel graph algorithms
+                                                           this paper, we present a new parallel distributed approximation algorithm for i­fluence maximization with
+                                                           provable approximation guarantees. Our approach, which we call GreediRIS, leverages the RandGreedi
+                                                           framework—a state-of-the-art approach for distributed submodular optimization—for solving a step that
+                                                           computes a maximum 𝑘 cover. GreediRIS combines distributed and streaming models of computations, along
+                                                           with pruning techniques, to eﬀectively address the communication bottlenecks of the algorithm. Experimental
+                                                           results on up to 512 nodes (32K cores) of the NERSC Perlmutter supercomputer show that GreediRIS can
+                                                           achieve good strong scaling performance, preserve quality, and signiﬁcantly outperform the other state-of-the­
+                                                           art distributed implementations. For instance, on 512 nodes, the most performant variant of GreediRIS achieves
+                                                           geometric mean speedups of 28.99× and 36.35× for two diﬀerent diﬀusion models, over a state-of-the-art parallel
+                                                           implementation. We also present a communication-optimized version of GreediRIS that further improves the
+                                                           speedups by two orders of magnitude.
+
+
+
+  1. Introduction                                                                           ing classical submodularity results [7], Kempe et al. provided a greedy
+                                                                                            (1 − 1∕𝑒)-approximation algorithm, which incrementally expands the
+      Given a large real-world graph (e.g., online social network), a fixed                 seed set by selecting the next seed with the highest marginal gain in
+  budget 𝑘 > 0, and a stochastic diﬀusion model 𝑀 , the i­fluence max­                      i­fluence. Although the connection to submodularity provides eﬃcient
+  imization (henceforth, InfMax) problem aims to identify 𝑘 nodes (or                       algorithms, approximating InfMax still requires Monte Carlo simula­
+  “seeds'') that when initially activated, are expected to maximize in­                     tions to generate samples that approximate the spread from the current
+  ﬂuence spread on the network under the model 𝑀 . This ``word of                           seed set [5].
+  mouth'' approach to spreading i­fluence has made InfMax rich in                               An alternative class of approaches, such as the IMM [8] and OPIM [9]
+  applications—e.g., for online viral marketing [1], network monitor­                       algorithms, uses the notion of reverse i­fluence sampling [10] to obtain
+  ing [2], controlling rumors in social networks [3], recommendation                        (1 − 1∕𝑒 − 𝜀)-approximation, where 𝜀 ∈ [0, 1] is a controllable parameter
+  systems [4], and in understanding how contagions spread in a popu­                        that models the sampling error. These approaches [11,8,9] use random
+  lation [5,6].                                                                             sampling of the graph to ``score'' vertices based on how other vertices
+      InfMax is NP-hard under classical diﬀusion models [5] such as In­                     can reach them and use that information to identify seeds. These algo­
+  dependent Cascade (IC) and Linear Threshold (LT). The seminal work by                     rithms and related implementations have suﬃciently demonstrated that
+  Kempe et al. [5] showed that the expected i­fluence spread function is                    the RIS-based approach is signiﬁcantly faster in practice compared to the
+  monotone submodular-which means the marginal gain of adding a new                        greedy hill climbing approach [5]-making the RIS-based approach the
+  seed to the current solution set decreases as the set becomes larger. Us­                 de facto choice to implement InfMax.
+
+
+    * Corresponding author.
+      E-mail address: ananth@wsu.edu (A. Kalyanaraman).
+
+  https://doi.org/10.1016/j.jpdc.2025.105037
+  Received 4 July 2024; Received in revised form 18 November 2024; Accepted 9 January 2025
+
+Available online 14 January 2025
+0743-7315/© 2025 The Author(s). Published by Elsevier Inc. This is an open access article under the CC BY-NC-ND license (http://creativecommons.org/licenses/by-
+nc-nd/4.0/).
+R. Barik, W. Cappa, S.M. Ferdous et al.
+                                                                                                   Journal of Parallel and Distributed Computing 198 (2025) 105037
+    The RIS based approaches consist of multiple rounds, each with two                  Table 1
+major phases: a) Sampling, and b) Seed selection. The sampling phase                    Notation.
+generates subgraph samples based on the diﬀusion model, and the seed                      Symbol         Description
+selection phase solves a maximum 𝑘-coverage problem on the generated
+                                                                                          𝐺 = (𝑉 , 𝐸)    Input graph with 𝑛 vertices in 𝑉
+samples—i.e., identifying 𝑘 vertex seeds that provide maximum cov­                        𝑆              Seed set, 𝑆 ⊆ 𝑉
+erage over the samples. Minutoli et al. [12,13] developed Ripples, the                    𝑘              Target number of output seed vertices
+ﬁrst parallel implementation for RIS-based IMM [8]. Subsequently, Tang                    𝑀              Diﬀusion process for influence spread over 𝐺
+et al. [14] developed DiIMM, which uses a similar distributed strategy to                 𝜎(𝐴)           Expected influence of 𝐴 ⊆ 𝑉 under 𝑀
+                                                                                          𝑂𝑃 𝑇           Max influence spread of any set of 𝑘 vertices
+parallelize IMM. Both these approaches retain the approximation guar­
+                                                                                          𝑁𝑎 (𝑢)         Subset of activated neighbors of vertex 𝑢
+antees of their sequential predecessors. However, in both these methods,
+while the sampling step is easier to scale, the seed selection step is more               𝑅𝑅𝑅(𝑢)         Random Reverse Reachable (RRR) set for 𝑢
+                                                                                          𝜃              Target number of RRR sets (i.e., samples)
+challenging as it involves performing 𝑘 global reductions—as observed
+                                                                                          R              Set containing 𝜃 RRR samples
+later in the results.                                                                     (𝑖)           Subset of vertices in 𝑉 present in RRR set 𝑖
+                                                                                          (𝑣)           Covering subset for 𝑣: (𝑣) = {𝑖|𝑣 ∈ (𝑖)}
+Contributions: In this paper, we target the seed selection step to im­                    𝑚              Number of machines (or processes)
+prove the scaling of RIS-based approaches. In particular, we propose a
+distributed streaming maximum-𝑘-cover (abbreviated max-k-cover)
+                                                                              by 𝜎(𝑆)) is the expected number of vertices that will be activated by 𝑆
+to accelerate seed selection, using the distributed Greedi [15,16] frame­
+                                                                              through a stochastic diﬀusion process, d­fined by a model 𝑀 . Note that
+work under a parallel setting. In this framework, a set of local machines
+computes partial greedy solutions of the local dataset which they trans­      0 < 𝜎(𝑆) ≤ 𝑛.
+mit to a global machine, and the global machine applies an aggregation
+algorithm on the partial solutions received.                                  Deﬁnition 2.1 (InfMax). Given a graph 𝐺 = (𝑉 , 𝐸), a diﬀusion process
+    Distributed Greedi avoids expensive reductions. However, we ob­           𝑀 , and an integer 𝑘, the I­fluence Maximization problem finds a seed
+serve that employing the vanilla Greedi to InfMax, the global aggre­          set 𝑆 ⊆ 𝑉 , where |𝑆| ≤ 𝑘 maximizing 𝜎(𝑆) under 𝑀 .
+gation leads to a compute and communication bottleneck as the number
+of machines increases. To address this issue, we have designed two                Kempe et al. [5] showed that InfMax is NP-hard under two practical
+techniques: a) aggregation in the global machine asynchronously by            diﬀusion models, namely, Independent Cascade (IC) and Linear Thresh­
+adapting a recent streaming algorithm, and b) truncating elements in the      old (LT). In the IC model, at each diﬀusion step, every edge ⟨𝑢, 𝑣⟩ has a
+local partial solutions to aggressively cut down on computing and com­        ﬁxed probability 𝑝𝑢 (𝑣) for an active vertex 𝑢 to activate a neighbor 𝑣. The
+munication for the global machine. Using the streaming algorithm in the       process stops when no further activation is possible. The LT model de­
+global aggregation allows us to carry out the local and global seed se­       scribes group behavior where individuals (i.e., 𝑣 ∈ 𝑉 ) have some inertia
+lections in tandem, eﬀectively masking the communication overheads.           (modeled by a scalar 𝜏𝑣 ) in adopting mass behavior. The strength of the
+Both of these approaches come with theoretical approximation guaran­          relationship between two vertices 𝑢, 𝑣 ∈ 𝑉 is captured by a probabilistic
+tees. In summary, the main contributions are:                                 edge weight 𝑤(𝑢,𝑣) , and the sum of the incoming weights on any vertex is
+                                                                                                                                       ∑
+                                                                              assumed to be 1. A vertex 𝑣 becomes active in LT if 𝑢∈𝑁 (𝑣) 𝑤𝑢,𝑣 ≥ 𝜏𝑣 ,
+                                                                                                                                             𝑎
+   • We present GreediRIS, a new distributed streaming algorithm for          where 𝑁𝑎 (𝑣) is the subset of active neighbors of 𝑣.
+     RIS-based InfMax on distributed parallel platforms (§3).                     Kempe et al. [5] also proved that the expected i­fluence 𝜎(𝑆) is
+   • We present and implement GreediRIS-trunc, a truncation tech­             a non-negative monotone submodular function. Submodular functions
+     nique, to provide a knob to control communication overhead with          model diminishing returns of utilities. More formally:
+     a tradeoff in quality (§3.3.2).
+   • All our algorithms have provable worst-case approximation guar­          Deﬁnition 2.2 (Submodular function). Let 𝑋 be a finite set, the function
+     antees (§3.3.2).                                                         𝑓 ∶ 2𝑋 → ℝ is submodular if and only if:
+   • Experimental evaluation on up to 512 compute nodes (32K cores) of
+     a supercomputer demonstrates that GreediRIS signiﬁcantly out­            𝑓 (𝐴 ∪ {𝑥}) − 𝑓 (𝐴) ≥ 𝑓 (𝐵 ∪ {𝑥}) − 𝑓 (𝐵),                                         (1)
+     performs the state-of-the-art distributed methods [12,14] (reported
+                                                                              where 𝐴 ⊆ 𝐵 ⊆ 𝑋 and 𝑥 ∈ 𝑋 ⧵ 𝐵 .
+     speedups with geometric mean of 28.99× and 36.35× for two pop­
+     ular diﬀusion models), while preserving output quality (geometric
+     mean of reported quality change from state-of-the-art baseline is            For InfMax, where 𝑋 = 𝑉 , the left term represents the marginal gain
+     2.72%).                                                                  in i­fluence for adding a new vertex 𝑥 to an existing seed set 𝐴 ⊆ 𝑉 . By
+                                                                              the submodularity property, the net gain of adding a new vertex into the
+   Our work—the first of its kind to incorporate distributed parallel         current seed set could only diminish as the seed set expands—suggesting
+submodular optimization for InfMax-is also generic enough to be ex­          a greedy approach toward seed set expansion. This seminal result led to
+tended to a broader base of application settings that use submodular          the first greedy approximation algorithm for InfMax [5]-using greedy
+optimization. While such adaptations need signiﬁcant eﬀorts in imple­         hill climbing [7]. Estimating the actual i­fluence spread is also shown
+mentations, this paper represents a concrete demonstration for InfMax.        to be #P-hard under both the IC and LT models [17,18]. The exist­
+                                                                              ing algorithms for InfMax thus employ randomized sampling to esti­
+2. Background and preliminaries                                               mate expected i­fluence and introduce an additive sampling error in
+                                                                              the approximation factor. The early eﬀorts focused on simulation-based
+   In this section, we review the necessary background for the InfMax         approaches such as Monte-Carlo simulation [5]. Subsequently, another
+problem, including submodular optimization, max-k-cover, and the              class of approximation algorithms (albeit faster) was developed by ex­
+IMM algorithm which forms the sequential template for our method.             ploiting Reverse I­fluence Sampling (RIS) that uses the notion of reverse
+Table 1 lists the key notations used in the paper.                            reachability [10]. More speciﬁcally, this strategy is based on the con­
+   Let 𝐺 = (𝑉 , 𝐸) be a graph, where 𝑉 and 𝐸 are the sets of vertices         struction of random reverse reachable set for vertices.
+and edges, respectively, and 𝑛 = |𝑉 |. The process of i­fluence spread on
+𝐺 can be described as follows. Let 𝑆 ⊆ 𝑉 denote a seed set of vertices        Deﬁnition 2.3 (Random Reverse Reachable (RRR) set). Let 𝑔 be a random
+which are already activated. Then, the expected i­fluence of 𝑆 (denoted       subgraph of 𝐺 , obtained by removing edges randomly as dictated by
+
+
+                                                                          2
+R. Barik, W. Cappa, S.M. Ferdous et al.
+                                                                                                    Journal of Parallel and Distributed Computing 198 (2025) 105037
+their respective edge probabilities. The random reverse reachable set for       Algorithm 1 IMM(𝐺, 𝑘, 𝜀) by [8].
+vertex 𝑢 ∈ 𝑉 in 𝑔 is given by: 𝑅𝑅𝑅𝑔 (𝑢) = {𝑣|∃ a path from 𝑣 to 𝑢 in 𝑔.}        Input: 𝐺(𝑉 , 𝐸): graph; 𝑘: # of seeds; 𝜀 ∈ [0, 1]: sampling error.
+                                                                                Output: 𝑆 : the seed set
+                                                                                 1: {1. Estimate 𝜃 using martingale rounds}
+   We refer to each 𝑅𝑅𝑅𝑔 (𝑢) as a sample generated for 𝑢. Note that each
+                                                                                 2: R ← ∅
+such sample is a subset of 𝑉 . An alternative interpretation of 𝑅𝑅𝑅𝑔 (𝑢)
+                                                                                 3: 𝜃̂ ← Estimate(𝑘, 𝜀, |𝑉 |)
+is—if a vertex 𝑣 appears in 𝑅𝑅𝑅𝑔 (𝑢), then 𝑣 is a likely i­fluencer of 𝑢.
+                                                                                 4: for 𝑥 ∈ [1, log |𝑉 |] do
+Consequently, higher the frequency of the vertex 𝑣 appearing in such             5:    if 𝑥 > 1 then
+random reverse reachable sets, the larger is its expected i­fluence in the       6:       𝜃̂ ← 2 × 𝜃̂
+input network.                                                                   7:    R ← Sample(𝐺, 𝜃̂ − |R|, R)
+                                                                                 8:    𝑆 ← SelectSeeds(𝐺, 𝑘, R)
+2.1. The IMM algorithm                                                           9:    if CheckGoodness(𝑆, 𝑉 , &𝐿𝐵 ) then
+                                                                                10:       𝜃 ← 𝑓 (𝑘, 𝜀, |𝑉 |, 𝐿𝐵)
+    Tang et al. [8] proposed the IMM algorithm to implement the RIS             11:     break {lower bound condition is met}
+approach [10,11]. The algorithm is summarized in Algorithm 1. The               12: R ← Sample(𝐺, 𝜃) {2. Generate 𝜃 RRR samples}
+main intuition is to generate 𝜃 number of RRR samples, and then select          13: 𝑆 ← SelectSeeds(𝐺, 𝑘, R) {3. Select final seeds}
+a set of 𝑘 vertices as the solution seed set such that they provide maxi­       14: return S
+
+mum coverage over the set of samples. It uses Martingale analysis and
+bootstrap techniques to estimate a lower bound of the sampling eﬀort            approximation for the max-k-cover, for any 𝛼 ≤ (1 − 1∕𝑒), the sam­
+required to achieve OPT (the utility of the intractable optimal solution).      pling eﬀort is trivially suﬃcient.
+Initially, using the analytical formula prescribed in [8], the algorithm            The Sample(.) function is usually implemented as a probabilistic
+estimates the number of RRR samples to compute, denoted by 𝜃̂ , using           BFS originating from 𝜃̂ randomly selected roots from 𝑉 in any martin­
+the values of |𝑉 |, 𝜀 and 𝑘 (Estimate(.) in line 3). Next, the sampling         gale round. All vertices visited in a probabilistic BFS become the RRR
+procedure Sample(.) generates and populates those 𝜃̂ RRR samples in             set for that sample. The SelectSeeds(.) procedure is greedy, and in­
+R (line 7). To generate such a sample:                                          volves iteratively computing 𝑘 vertices with a maximum coverage on
+                                                                                the set of RRR samples as detailed in §3.2.
+ 1. a vertex 𝑢 ∈ 𝑉 is chosen uniformly at random to be the source ver­              Among distributed parallel approaches for InfMax, the state-of-the­
+    tex.                                                                        art comprises of PREEMPT [20] and IMpart [21] for greedy hill climb­
+ 2. given a source, a probabilistic BFS (edges are selected for traversal       ing, and Ripples [12,13] and DiIMM [14] for parallel distributed IMM.
+    based on their assigned weights) on the reverse graph (destinations         As we focus on RIS-based approaches, we will review Ripples and Di­
+    are vertices with incoming edges to the source) is used to populate         IMM.
+    the RRR sample.
+                                                                                Prior work in parallel distributed IMM: Both Ripples and DiIMM
+The generated samples are then used to compute 𝑘 seeds by the seed se­          approaches start by loading the entire graph on each machine, and ef­
+lection step SelectSeeds(.) as shown in the line 8. This is an instance         ﬁciently distributing the generation of all (𝜃 or 𝜃̂ ) samples across 𝑚
+of computing a max-k-cover on the universe of samples. Using this                                    𝜃
+                                                                                machines, i.e., 𝑂( ) samples per machine. However, seed selection
+                                                                                                     𝑚
+intermediate seed set, (provably an unbiased estimator of the unknown           involves signiﬁcant data exchange to compute the updated marginal
+optimum (OPT)) a lower bound (LB) on OPT is computed, and compared              coverage for each vertex, making the step communication-intensive. In
+against a certain fraction of |𝑉 | (denoted by function CheckGoodness           particular, since sampling is distributed, each machine can keep track
+in Algorithm 1; details in [8]). If the condition isn’t met, 𝜃̂ is doubled      of only the local sample coverage for each of the 𝑛 vertices. Thus, to
+and the process is repeated. The IMM algorithm conducts at most log |𝑉 |        get the global coverage values, a global reduction is required each time
+such rounds, which we will term as ``martingale'' rounds (lines 4--11) till     a new seed is selected. The Ripples algorithm implements this using 𝑘
+the condition is met. Once a tight lower bound is computed, the final           global reductions (over an 𝑛-sized frequency vector). The updated global
+sample size (𝜃 ) is calculated using the LB, and the martingale loop is ter­    frequencies are used to pick the next best seed. In contrast, DiIMM com­
+minated. Finally, 𝜃 RRR samples are generated, and the set of 𝑘 seeds           putes these updates in a lazy fashion under a master-worker setting.
+are selected using those samples (lines 12--13).                                Here, after performing a global reduction to select the first seed, the
+    The IMM algorithm is shown to be (1 − 1∕𝑒 − 𝜀)-approximate for              master processes the remaining vertices in a non-increasing order of
+InfMax. Here, 𝜀 is the precision parameter dictating the sampling error.        their original coverage. If the next vertex selected is detected to have an
+We restate a result from [8] here.                                              outdated coverage, it is pushed back into the queue and the algorithm
+                                                                                continues. Once it finds the next seed (one with the correct next best
+Theorem 2.1. Given 𝜃 = 𝜆∗ ∕𝑂𝑃 𝑇 and 𝛿 ∈ (0, 1), the Algorithm 1 returns         marginal coverage), it broadcast the information to all the machines so
+an (1 − 1∕𝑒 − 𝜀)-approximate solution of InfMax with probability at least       that they can update vertex coverages using their local sample sets. The
+1 − 𝛿.                                                                          master machine accumulates the changes via a global reduction for the
+                                                                                next iteration of seed selection.
+    Here 𝑂𝑃 𝑇 is the optimal expected i­fluence. The 𝜆∗ is a function of            We can show that the DiIMM approach is algorithmically equivalent
+𝑛, 𝜀, 𝑘, 𝛿 . We refer to [8,19] for the actual value of the function 𝜆∗ . The   of performing 𝑘 global reductions. While Ripples does this entirely in
+(1 − 1∕𝑒) term in Theorem 2.1 is due to the standard greedy algorithm           a distributed fashion, DiIMM computes this using a master-worker set­
+for the seed selection that computes a max-k-cover on the universe              ting. In either case, seed selection dominates communication costs, as
+of 𝜃 samples. In fact, we can replace the greedy algorithm with any             it entails a reduction of an 𝑂(𝑛)-sized vector within each of the 𝑘 itera­
+𝛼 -approximate algorithm, where 𝛼 ≤ (1 − 1∕𝑒).                                  tions.
+                                                                                    In our work, the distributed sampling step is similar to Ripples and
+Corollary 2.1. Given 𝜃 = 𝜆∗ ∕𝑂𝑃 𝑇 , 𝛿 ∈ (0, 1) and 𝛼 -approximate max­          DiIMM—as it is a step that is easily amenable for distributed parallelism.
+k-cover, the IMM algorithm returns an (𝛼 − 𝜀)-approximate solution of           The major diﬀerence, however, stems in the way we perform seed se­
+InfMax with probability at least 1 − 𝛿 .                                        lection. More speciﬁcally, we reformulate the seed selection step using
+                                                                                the RandGreedi framework [16] so as to bring the state-of-the-art for
+    The just­fication of the Corollary 2.1 is as follows. Since the sam­        distributed submodular optimization to parallelize i­fluence maximiza­
+pling eﬀort, 𝜃 = 𝜆∗ ∕𝑂𝑃 𝑇 is estimated to guarantee an (1 − 1∕𝑒)­               tion. The key advantages are: a) the 𝑘-steps of communication can be
+
+
+                                                                            3
+R. Barik, W. Cappa, S.M. Ferdous et al.
+                                                                                                      Journal of Parallel and Distributed Computing 198 (2025) 105037
+reduced to just two steps (as will be explained next in §3.2); and b)           {0, … , 𝜃 − 1} (i.e., R), and the collection of covering subsets is  . More
+streaming also can be used (along with a truncation scheme) to mask             formally, the max-k-cover problem here is to find a subset 𝑆 ⊆ 𝑉 that
+                                                                                                                    ⋃
+out communication overheads further (as will be explained in §3.3).             is given by: arg max𝑆⊆𝑉 𝐶(𝑆) = || 𝑖∈𝑆 (𝑖)|| , subject to |𝑆| ≤ 𝑘.
+                                                                                    The function 𝐶(𝑆) can easily be shown to be non-negative monotone
+3. GreediRIS: a RandGreedi framework for distributed                            submodular. A greedy algorithm that repeatedly selects a covering sub­
+i­fluence maximization                                                          set from  with the largest marginal gain with respect to the current so­
+                                                                                lution, achieves (1−1∕𝑒) worst-case approximation guarantee [7] which
+    We exploit the submodular nature of the max-k-cover compu­                  is the best achievable unless P=NP [24]. In practice, faster variants of
+tation step in order to accelerate seed selection for InfMax. The               greedy exist, such as lazy greedy [25], threshold greedy [26,27], and
+state-of-the-art distributed submodular maximization algorithm is the           stochastic greedy [15]. Lazy greedy [25], which exploits the monotone
+RandGreedi [16] framework. Adapting this framework, we present a                decrease in the marginal gain of a submodular function, is widely used
+new distributed memory parallel algorithm for i­fluence maximization            and often performs much faster than the standard greedy in practice
+and refer to our approach GreediRIS.                                            [27] while obtaining the same approximation guarantee. The submodu­
+    We first provide a brief overview on Greedi and RandGreedi                  larity property ensures that the marginal gain of an element with respect
+(§3.1). Then we show how computing max-k-cover allows adapting                  to the current solution can only decrease. Lazy greedy uses this observa­
+RandGreedi for any RIS-based InfMax algorithms (§3.2). We then dis­             tion and maintains a max heap of upper bounds on the marginal gains of
+cuss the limitations of this simple adaptation and propose a distributed        each element. These upper bounds, updated lazily, are used to select the
+streaming algorithm (§3.3) and a communication-reducing truncation              next element, potentially avoiding computations of marginal gains for a
+technique (§3.3.2) to alleviate these limitations. Section 3.4 describes        large fraction of the elements. Our implementation supports both stan­
+our overall parallel algorithm.                                                 dard and lazy greedy approaches. Algorithm 2 shows our lazy greedy
+                                                                                max-k-cover.
+3.1. The Greedi framework
+                                                                                Algorithm 2 Lazy-greedy-max-k-cover(𝜃,         ̂ , 𝑘).
+    The Greedi framework represents approaches [16,22,23] for dis­                      ̂
+                                                                                Input: 𝜃 : size of the universe,  : 𝑛 covering subsets, 𝑘: an integer
+tributed submodular function optimization under budget constraints.             Output: 𝑆 : A subset of [0, … , 𝑛 − 1] of size at most 𝑘
+These approaches initially partition the data set into diﬀerent ma­              1: Build a max heap 𝑄 using all 𝑛 covering subsets  , and using the cardinality
+chines. Each machine, independently in parallel, executes the standard                of each subset as the key
+greedy algorithm [7] to compute its local solutions. These local solu­           2: 𝑆 = ∅
+tions are then communicated to a global aggregation node, where they             3: while (|𝑆| < 𝑘) or Q is empty do
+are merged. The greedy algorithm is then employed in the global ma­              4:     𝑣 = Q.pop()
+chine on this set of merged local solutions. The final solution is the           5:     marginal_gain = 𝐶(𝑆 ∪ {𝑣}) − 𝐶(𝑆)
+one that maximizes the function value from the set of local solutions            6:     if marginal_gain ≥ Q.top().key then
+                                                                                 7:        𝑆 = 𝑆 ∪ {𝑣}
+and the global solution. This two-stage algorithm is shown to be more
+                                                                                 8:   else
+eﬃcient [16] than earlier distributed algorithms. Although Greedi per­
+                                                                                 9:      Q.push(⟨𝑣, marginal_gain⟩)
+forms well in practice, its approximation ratio depends inversely on the        10: return 𝑆
+number of machines. RandGreedi [16] was proposed to improve the
+approximation guarantee of Greedi. Through a probabilistic analysis,
+the authors showed that by partitioning the data uniformly at random,               Next, we describe our distributed parallel version of Algorithm 1
+Greedi could achieve a constant approximation guarantee. We restate             using the RandGreedi framework. Let 𝑚 to denote the number of ma­
+the following theorem from [16] that proves the approximation ratio of          chines (or processes or ranks, used interchangeably), and 𝑝 ∈ [0, 𝑚 − 1]
+RandGreedi.                                                                     denote an arbitrary machine. Given 𝐺(𝑉 , 𝐸), 𝑘, and 𝑚, our distributed
+                                                                                IMM algorithm conducts multiple martingale rounds just as the sequen­
+Theorem 3.1. Let the greedy method on the local machines be an 𝛼 ­              tial version (Algorithm 1). Algorithm 3 shows the RandGreedi version
+approximate, and that the global algorithm be a 𝛽 -approximate for maxi­        of our distributed IMM for each round.
+mizing a monotone submodular function subject to a cardinality constraint.          During the sampling phase (lines 1--4 of Algorithm 3), each machine
+                                       𝛼𝛽                                       independently generates 𝜃∕𝑚̂   samples from 𝐺 . This is achieved by se­
+Then, RandGreedi is (in expectation)      -approximate for the same prob­
+                                          𝛼+𝛽
+                                                                                lecting vertices in 𝑉 uniformly at random and generating 𝑅𝑅𝑅(𝑣) for
+lem.
+                                                                                each of them. We use the Leap Frog method described in [12] to ensure
+                                                                                consistent parallel pseudorandom generation across diﬀerent values of
+   While the local machines in RandGreedi need to execute the greedy
+                                                                                𝑚. At rank 𝑝, the parallel sampling phase produces R𝑝 . Since 𝜃̂ doubles
+algorithm locally, the global algorithm can use any approach.
+                                                                                with each martingale round, in our implementation we retain the pre­
+                                                                                vious batch of samples and simply add the second half (i.e., augment
+3.2. Distributed IMM using RandGreedi                                                                   ̂
+                                                                                                        𝜃∕𝑚                             ̂
+                                                                                                                                        𝜃∕𝑚
+                                                                                the previous round’s set of samples with a new set of       samples).
+                                                                                                          2                               2
+                                                                                                                         𝜃̂          𝜃̂
+    We first extend IMM into the RandGreedi framework. The focus on             The samples in R𝑝 are numbered from [𝑝 ⋅ , (𝑝 + 1) ⋅ − 1], so that
+                                                                                                                         𝑚          𝑚
+IMM is for expository reasons, as it a prototypical RIS approach. Our           each rank can claim a disjoint interval. Next, we generate a partition­
+distributed approach also works for OPIM [9].                                   ing of the set of vertex ids [0, 𝑛 − 1] uniformly at random across the 𝑚
+    Recall from Table 1 that R denotes the collection of sampled 𝜃 RRR          machines so that each rank 𝑝 is assigned a distinct subset of ≈ 𝑛∕𝑚 ids
+sets, and (𝑖) ⊆ 𝑉 denote the 𝑖th RRR set in this collection. Given R, 𝑉 ,      (line 5 of Algorithm 3). Let 𝑉𝑝 ⊆ [0, 𝑛 − 1] denote this subset assigned to
+and the target number 𝑘, the seed selection problem can be formulated           rank 𝑝. Note that as this is a uniform random partitioning, and therefore
+as a max-k-cover computation as follows. The set R represents the uni­          each vertex is assigned only to one rank.
+verse to be covered. From R, we generate a collection of covering subsets,          Next, we perform a shuﬄe communication such that the ids of all the
+ . For each node 𝑣 ∈ 𝑉 , let (𝑣) be the subset of RRR sets (ident­fied        RRR sets that contain a particular vertex 𝑢 are gathered at the rank that
+by their respective indices in [0, 𝜃 − 1]) in which 𝑣 appears—i.e., (𝑣) =      is responsible for 𝑢. This is implemented using an MPI all-to-allv
+{𝑖 ∈ [0, 𝜃 −1]|𝑣 ∈ (𝑖)}. It is now easy to see that the seed selection prob­   communication primitive (line 6 of Algorithm 3). Speciﬁcally, we first
+lem of IMM reduces to finding a max-k-cover, where the universe is              construct a set of partial covering subsets 𝑝 (𝑢) at each rank 𝑝 using the
+
+
+                                                                            4
+R. Barik, W. Cappa, S.M. Ferdous et al.
+                                                                                                             Journal of Parallel and Distributed Computing 198 (2025) 105037
+Algorithm 3 RandGreedi-RIS-Round(𝐺, 𝑘, 𝜃,             ̂ 𝑚).                                      Table 2
+                                                                                                 The runtimes in seconds for computing the local and global
+Input: 𝐺(𝑉 , 𝐸): input graph, 𝑘: an integer, 𝜃̂ : number of samples for the current
+                                                                                                 solutions of max-k-cover using the RandGreedi template.
+    round, 𝑚: number of machines
+                                                                                                 Livejournal (|𝑉 | = 4.8𝑀, |𝐸| = 68.9𝑀 ) was used as the test
+Output: 𝑆 : the seed set
+                                                                                                 input.
+ 1: for each machine 𝑝 ∈ [𝑚] in parallel do
+ 2:    R𝑝 ← Generate 𝜃∕𝑚 ̂    random samples                                                                                𝑚: Number of machines
+ 3:   for each vertex 𝑣 ∈ 𝑉 do
+                                                                                                   Time (in sec)            8       16       32       64      128
+ 4:       𝑝 (𝑣) = {𝑗|𝑣 ∈ 𝑝 (𝑗)}
+ 5: Partition 𝑉 uniformly at random into 𝑚 vertex sets (𝑉𝑝 at 𝑝)                                   local max-k-cover        1.87    0.91     0.34     0.17    0.10
+                       ⋃                                                                           global max-k-cover       0.22    0.67     1.20     2.47    4.86
+ 6: All-to-all: (𝑢) = 𝑝∈[𝑚] {𝑝 (𝑢)|𝑢 ∈ 𝑉𝑝 } at 𝑝
+ 7: 𝑆 ← RandGreedi-max-k-cover(𝜃,      ̂ , 𝑘, {𝑉𝑝 })
+ 8: return 𝑆
+                                                                                         thereby increasing the amount of computations required to calculate
+                                                                                         the marginal gains to select each seed. This motivates the design of a
+                                                                                         streaming based implementation presented next in §3.3.
+
+                                                                                         3.3. Distributed streaming IMM via RandGreedi
+
+                                                                                             To overcome the above limitations of RandGreedi, we present two
+                                                                                         improvements. The first approach (§3.3.1) replaces the global aggrega­
+                                                                                         tion algorithm with a streaming max-k-cover technique inside each
+                                                                                         round. The second approach (§3.3.2) reduces communication cost from
+                                                                                         the local max-k-cover solvers through a truncation technique.
+
+Fig. 1. Sampling visualized as a sparse matrix. The sampling phase populates             3.3.1. Streaming computation in the global machine
+the columns, and the shuﬄe phase distributes by rows.                                        The first approach to improve RandGreedi replaces the global ag­
+                                                                                         gregation algorithm with a streaming max-k-cover. The key idea is
+RRR sets of R𝑝 (line 4 of Algorithm 3). These partial covering subsets                   to immediately send the local seeds to the global machine, as they are
+are then scattered so that the lists corresponding to all vertices 𝑢 ∈ 𝑉𝑝                generated, without waiting for the local machines to complete all their
+                                             ⋃                                           greedy selections. The global machine then runs a linear time one-pass
+are gathered at rank 𝑝 as follows: (𝑢) = 𝑝∈[𝑚] {𝑝 (𝑢)|𝑢 ∈ 𝑉𝑝 } at 𝑝. At
+the end of this step, rank 𝑝 contains the complete covering subset (𝑢)                  streaming algorithm on the incoming data, thus offsetting the compu­
+for each 𝑢 ∈ 𝑉𝑝 . Fig. 1 illustrates this shuﬄe operation.                               tational expense, and allowing masking of communication overhead.
+    We are now ready to apply the RandGreedi framework to com­                           Streaming can therefore allow tandem executions of global and local
+pute seeds. Algorithm 4 shows the function to compute the seed set                       solvers.
+using max-k-cover. As explained in §3.1, the RandGreedi frame­                               Implementing streaming necessitates that the global max-k-cover
+work involves two steps: computing local max-k-cover in a distributed                    algorithm be changed to work with the incoming stream of local seeds
+fashion, and then merging those local solutions into a global (single)                   (from diﬀerent machines). The standard greedy max-k-cover algo­
+machine to compute a global max-k-cover. Subsequently, the global                        rithm (Algorithm 2) being oﬄine, is not suitable here. However, with the
+solution (𝑆𝑔 ) is compared with the best of the local solutions (𝑆𝓁 ), and               RandGreedi framework, we are free to choose any algorithm for aggre­
+the best of the two is output as the final solution (𝑆 ) for that martin­                gation. As the max-k-cover problem is an instance of the submodular
+gale round. This is followed by a broadcast call to make the utility of                  maximization with cardinality constraints, we can use one of the recent
+the selected seed set available at all machines.                                         direct streaming algorithms designed for max-k-cover [28,29]. In this
+                                                                                         work, we employ the (1∕2 − 𝛿)-approximate streaming algorithm (de­
+Algorithm 4 RandGreedi-max-k-cover(𝜃, , 𝑘, {𝑉𝑝 }).                                      scribed next) also developed in [28] because it’s nearly linear in runtime,
+                                                                                         and absence of any post-processing steps, thus generating the solution
+Input: 𝜃 : size of the universe,  : 𝑛 covering subsets, 𝑘: an integer, {𝑉𝑝 }: uniform
+                                                                                         immediately after the streaming phase ends. The challenge here is also
+    random set of partitions of 𝑉
+Output: 𝑆 : A subset of 𝑉 ∶ [0, … , 𝑛 − 1] of size at most 𝑘                             to show that the streaming algorithm provides good quality solution ef­
+ 1: for each process 𝑝 ∈ [𝑚] in parallel do                                              ﬁciently.
+ 2:   𝑆𝑝 ← Lazy-greedy-max-k-cover(𝜃, 𝑝 , 𝑘) //local max-k-cover
+                   ⋃
+ 3: Gather:  ′ = 𝑝 (𝑆𝑝 )                                                               Algorithm 5 Streaming max-k-cover at the global receiver.
+ 4: 𝑆𝑔 ← Lazy-greedy-max-k-cover(𝜃,  ′ , 𝑘) //global max-k-cover
+                                                                                         Input: 𝑚 : streaming collection of subsets from local senders, 𝑘: an integer, 𝑢:
+ 5: 𝑆𝓁 = arg max𝑝∈[𝑚] {𝐶(𝑆𝑝 )} //local best
+                                                                                             upper bound on OPT, 𝑙 : lower bound on OPT, 𝛿
+ 6: 𝑆 = arg max{𝐶(𝑆𝑔 ), 𝐶(𝑆𝓁 )}
+                                                                                         Output: set of seeds of size at most 𝑘
+ 7: return 𝑆                                                                                                      𝑢
+                                                                                          1: Create 𝐵 = log1+𝛿 ⌊ ⌋ buckets
+                                                                                                                  𝑙
+                                                                                          2: 𝐶𝑏 ← covering sets of a bucket 𝑏, initialized to empty
+Limitations: A straightforward implementation of Algorithms 3 and 4                       3: 𝑆𝑏 ← set of seed nodes at bucket 𝑏, initialized to empty
+could lead to the global aggregation step becoming a bottleneck, as it                    4: for 𝑠 ∈ 𝑚 do
+                                                                                          5:    for all 𝑏 ∈ [0, 𝐵 − 1] in parallel do
+has to wait until all the local machines complete their local max-k­                                                           (1+𝛿)𝑏
+                                                                                          6:      if |𝑆𝑏 | < 𝑘 and |𝑠 ⧵ 𝐶𝑏 | ≥        then
+cover computations. With increasing 𝑚, this issue is exacerbated by the                                                          2𝑘
+                                                                                          7:         𝐶𝑏 = 𝐶𝑏 ∪ {𝑠}
+global aggregation step receiving up to 𝑚 ⋅ 𝑘 local solutions. To test this
+                                                                                          8:         𝑆𝑏 = 𝑆𝑏 ∪ 𝑖𝑑(𝑠)
+hypothesis, we implemented and tested this template version. Table 2                      9: 𝑏∗ = 𝑎𝑟𝑔 max𝑏 |𝐶𝑏 |
+shows the running times for the local and global max-k-cover steps                       10: return 𝑆𝑏∗
+as a function of 𝑚. The results show that as 𝑚 is increased, the time to
+generate the local solutions decreases while the time to aggregate and
+produce the global solution increases. Also, the global aggregation step                    Let 𝑢 and 𝑙 be an upper and lower bound on optimum coverage, re­
+                                                                                                                                                      𝑢
+chooses the final 𝑘 seeds from a signiﬁcantly richer set of candidates,                  spectively. For a given 0 < 𝛿 < 1∕2, we maintain 𝐵 = log1+𝛿 ⌊ ⌋ buckets
+                                                                                                                                                                 𝑙
+
+
+                                                                                     5
+R. Barik, W. Cappa, S.M. Ferdous et al.
+                                                                                                       Journal of Parallel and Distributed Computing 198 (2025) 105037
+indexed by the integers [0, 𝐵 − 1]. Each bucket 𝑏 has a lower value cor­
+responding to the lower threshold limit representing the bucket, which
+is (1 + 𝛿)𝑏 . When a streamed-in seed along with its covering subset 𝑠
+arrives, the algorithm computes the marginal gain of 𝑠 with respect to
+current solution of 𝑏, 𝑆𝑏 . If the bucket 𝑏 holds a solution set of size
+smaller than 𝑘 and the marginal gain is greater than (1 + 𝛿)𝑏 , the vertex
+representing the subset 𝑠 (denoted by id(s)) is inserted into the current
+solution, and the cover set (𝐶𝑏 ) is updated; otherwise, 𝑠 is discarded.
+This operation is repeated for all the buckets. Since the decision to
+recruit a seed into a bucket is independent across buckets, we use mul­
+tithreaded parallelism to process the buckets. Once the streaming phase
+ends, we output the solution in the bucket (𝑏∗ ) with maximum cover­
+age. Algorithm 5 runs in 𝑂(𝜃𝐵|𝑚 |∕𝑡) time (where 𝑡 is the number of
+threads), and is shown to be (1∕2 − 𝛿)-approximate of the optimal cov­
+erage [28].
+
+Lemma 3.1. The approximation ratio of GreediRIS with streaming ag­
+             (1−1∕𝑒)(1∕2−𝛿)
+gregation is                − 𝜀 in expectation.
+               (1−1∕𝑒)+(1∕2−𝛿)
+
+
+Proof. Since the local machines run a greedy algorithm the approxi­
+mation guarantee is (1 − 1∕𝑒). The streaming algorithm is (1∕2 − 𝛿)­                Fig. 2. Schematic illustration of our parallel GreediRIS approach inside one
+approximate. The guarantee follows from Theorem 3.1 and Corol­                      round.
+lary 2.1. □
+                                                                                    a reduction of the approximation ratio from that of GreediRIS. For ex­
+3.3.2. Communication reduction using truncation at the senders                      ample, the drop in approximation ratio compared to GreediRISwhen
+    In the RandGreedi framework for IMM, each machine can send up                   𝛼 is set at 0.75 and 0.5 is 1.86% and 4.95% respectively. The intu­
+to 𝑘 seeds, implying a total of 𝑚 ⋅ 𝑘 seeds arriving at the global ma­              ition behind why GreediRIS-trunc provides high quality solutions
+chine (be it with or without streaming). Our second improvement to                  in practice (as seen later in §4.3) despite the reduced approximation
+RandGreedi aims at reducing the volume of communication by restrict­                guarantee, lies in the submodular property exhibited by the local seeds.
+ing the local senders to send only a subset of the 𝑘 seeds to the global            For 0 ≤ 𝑖 ≤ 𝑗 ≤ 𝑘, the marginal utility of the 𝑖-th seed will always be
+machine. We refer to this approach as truncated greedy. Speciﬁcally, each           greater than or equal to that of the 𝑗 -th out of the 𝑘 local seeds. This im­
+local machine (sender) still computes all 𝑘 local seeds. However, during            plies, stronger the submodular behavior of the underlying function, the
+streaming each sends only the top 𝛼 ⋅ 𝑘 seeds (along with their local cov­          greater is the ben­fit from truncation as the early choices are likely to
+ering sets), where 0 < 𝛼 ≤ 1. We show that the approximation ratio for              provide signiﬁcant gains. This also means that if a submodular function
+the truncated greedy is (1 − 𝑒−𝛼 ) compared to the optimal solution of 𝑘            is close to a linear function, truncation might not be that useful.
+subsets. Thus, the 𝛼 value provides a trade-off between the scalability
+and approximation of the overall InfMax algorithm.                                  Extension to other RIS-based InfMax methods: Our GreediRIS ap­
+                                                                                    proach also extends to OPIM [9], which is another RIS-based approach
+Lemma 3.2. The approximation guarantee of truncated greedy is 1 − 𝑒−𝛼 .             to InfMax. Unlike IMM, OPIM delivers an instance-wise approximation
+                                                                                    guarantee in each computation round and is suitable for online process­
+Proof. We modify the standard analysis of the greedy algorithm for                  ing of InfMax. The instance-specific quality guarantees are achieved
+max-k-cover [24]. Let 𝑂𝑃 𝑇 be the optimal coverage of the 𝑘 ele­                    through partitioning the samples generated in each round (using the
+ments, and 𝑥𝑖 be the number of new elements covered by the truncated                same Sample(.) subroutine as IMM) into two halves 𝑅1 and 𝑅2 . The
+greedy algorithm in the 𝑖-th set it selects. We are interested to bound             ﬁrst is used to select an intermediate solution for that round (same mech­
+                                                 ∑𝛼𝑘                                anism as the SelectSeeds(.) step in IMM). The utility of this solution
+the coverage value of the truncated greedy, i.e., 𝑗=1 𝑥𝑗 . Since the opti­
+mal algorithm uses 𝑘 sets to cover 𝑂𝑃 𝑇 elements, at iteration (𝑖 + 1) of           on 𝑅2 is used as a validation score that is utilized by OPIM’s version
+                                                                   ∑                of the CheckGoodness subroutine to come up with the approximation
+                                                             𝑂𝑃 𝑇 − 𝑖𝑗=1 𝑥𝑖
+the algorithm, there must be a set that covers at least                       new   guarantee for that round. Algorithmically, OPIM bears many similarities
+                                 ∑                                 𝑘
+                           𝑂𝑃 𝑇 − 𝑖𝑗=1 𝑥𝑖                                           to IMM since it proceeds in rounds consisting of a sampling and seed se­
+elements. So, 𝑥𝑖+1 ≥                        .
+                                 𝑘                                                  lection phase and, as such, is also a suitable candidate for GreediRIS.
+                                                                       ∑𝑖+1
+    By a standard induction on the iteration, we can show that          𝑗=1 𝑥𝑗 ≥    We include experiments integrating OPIM with GreediRIS (§4.4).
+                                                            ∑𝑖+1
+𝑂𝑃 𝑇 − (1 − 𝑘1 )𝑖+1 𝑂𝑃 𝑇 . Plugging in 𝑖 + 1 = 𝛼𝑘, we get     𝑗=1 𝑥𝑗 ≥ 𝑂𝑃 𝑇 −
+                                                                                    3.4. Parallelization and implementation
+(1 − 𝑘1 )𝛼𝑘 𝑂𝑃 𝑇 ≥ (1 − 𝑒−𝛼 )𝑂𝑃 𝑇 . □
+                                                                                        Next, we present the parallelization details for the overall
+   We prove the following result using a similar technique as                       GreediRIS distributed streaming wor­flow. A schematic illustration
+Lemma 3.1.                                                                          of our GreediRIS wor­flow is shown in Fig. 2.
+
+Lemma 3.3. The approximation ratio of GreediRIS with truncated greedy               S1) Distributed sampling:
+                                               (1−𝑒−𝛼 )(1∕2−𝛿)
+in local machines and streaming aggregation is    −𝛼
+                                                (1−𝑒
+                                                               − 𝜀 in excep­
+                                                       )+(1∕2−𝛿)                        The input graph 𝐺 = (𝑉 , 𝐸) is loaded on all machines. Using 𝐺 , all
+tion. Here, 0 ≤ 𝛼 ≤ 1 is the fraction of 𝑘 local seeds communicated to the              machines generate ≈ 𝜃∕𝑚 samples each. This step supports multi­
+global machine.                                                                         threaded parallelism within each machine.
+                                                                                    S2) All to all:
+   For 𝛼 = 1, the approximation ratio of GreediRIS-trunc is the                         The list of vertex ids [0, 𝑛 − 1] is partitioned uniformly at random
+same as GreediRIS. Lowering the value of 𝛼 results in the senders com­                  so that each rank 𝑝 is assigned ≈ 𝑛∕𝑚 ids, represented by 𝑉𝑝 . Subse­
+municating only the top 𝛼 -fraction of their local 𝑘 seeds which results in             quently, using an MPI all-to-allv communication, we transport
+
+
+                                                                                6
+R. Barik, W. Cappa, S.M. Ferdous et al.
+                                                                                                   Journal of Parallel and Distributed Computing 198 (2025) 105037
+    all RRR set ids that contain any given vertex 𝑣 ∈ 𝑉𝑝 to rank 𝑝. At the         Table 3
+    end of this step, each machine stores the RRR set ids correspond­              Key details for our test inputs SNAP [31] and KONECT [32]). Avg. is
+    ing to all vertex ids in its assigned partition (𝑉𝑝 ). Recall the use of       the average out-degree and Max. is the maximum out-degree.
+    (𝑢) for this covering set for each vertex id 𝑢 ∈ 𝑉𝑝 . Henceforth, we            Input           #Vertices      #Edges             Avg.       Max.
+    distinguish between a ``sender'' process and a ``receiver'' process.
+                                                                                     Github          37,700         285,000            7.60       9,446
+    In our streaming implementation, there are 𝑚 − 1 senders (ranks                  HepPh           34,546         421,578            24.41      846
+    [1, 𝑚 − 1]) and one receiver process (rank 0).                                   DBLP            317,080        1,049,866          6.62       343
+S3) Sender process:                                                                  Pokec           1,632,803      30,622,564         37.51      20,518
+    A sender 𝑝 uses the collection of its ≈ 𝑛∕𝑚 covering sets to detect              LiveJournal     4,847,571      68,993,773         28.26      22,887
+                                 𝑝 𝑝       𝑝                                         Orkut           3,072,441      117,184,899        76.28      33,313
+    up to 𝑘 local seeds. Let [𝑥0 , 𝑥1 , … 𝑥𝑘−1 ] denote these seeds. We use          Orkut-group     8,730,857      327,037,487        56.81      318,240
+    the lazy greedy max-k-cover algorithm (Algorithm 2) that inter­                  Wikipedia       13,593,032     437,217,424        22.56      5,576,228
+    nally maintains a max heap to identify the next best seed, starting              Friendster      65,608,366     1,806,067,135      27.528     3615
+           𝑝
+    with 𝑥0 . To support streaming, the sender process sends each seed
+      𝑝
+    𝑥𝑖 along with its covering subset to the receiver process as and
+    when it is ident­fied. This is implemented using a nonblocking send        ing algorithm (§3.3) can be shown to be 𝑘. This is because the optimal
+    to minimize waiting at the sender process. The sender concludes            cover could be at most 𝑘 times of the cover of a set with the maximum
+    when all of its 𝑘 seeds are generated. Upon completion, it alerts the      marginal gain. Using this, the runtime
+                                                                                                              (       of the streaming
+                                                                                                                                )      computation in
+    receiver of its termination.                                               the receiver is (𝑚𝑘𝜃 ⋅ 𝐵) =  𝑚𝑘𝜃 ⋅ (log(1+𝛿) 𝑘) .
+    For the truncated version (§3.3.2), when the truncated limit is
+    reached no more sends happen from that sender. But the sender              Memory complexity: Here we only discuss the memory complexity
+    continues to generate all its 𝑘 seeds locally. The idea is to enable       of the streaming algorithm. Each of the bucket needs to store the to­
+    comparison at the end with the global solution.                            tal cover of its partial solution. Since total cover could be at most
+S4) Receiver process:                                                          𝜃 , we require (𝜃) memory per bucket. Each bucket also needs to
+    After participating in the initial sampling, the role of the receiver      store the partial solution of size (𝑘). Putting these together, the to­
+    switches to: a) aggregating all the seeds sent by all senders; and         tal( memory complexity
+    b) performing the global max-k-cover using the multi-threaded                                    ) of the streaming algorithm in the receiver is
+                                                                                (𝜃 + 𝑘) ⋅ log(1+𝛿) 𝑘 . This is more space eﬃcient than any oﬄine al­
+    streaming algorithm in Algorithm 5. Let 𝑡 denote the number of             gorithm that would require storing the complete incoming data, i.e.,
+    threads at the receiver. Thread rank 0 is a dedicated communicating        (𝑚𝑘𝜃) elements.
+    thread to listen to the senders using a nonblocking receive. The re­
+    maining (𝑡 − 1) threads parallelize the insertion of seeds into the 𝐵
+    buckets. We refer to these as bucketing threads. We assign ⌈𝐵∕(𝑡−1)⌉       Software availability: GreediRIS is implemented using C/C++, MPI
+    threads per bucket. When a new seed 𝑥 (along with its covering set         and OpenMP, and is open-sourced at the GreediRIS Github repository
+    (𝑥)) is received, the communicating thread places ⟨𝑥, (𝑥)⟩ on a          [30].
+    queue and atomically sets a flag corresponding to that index. For
+    this purpose, the receiver maintains a shared array 𝐴 of maximum           4. Experimental evaluation
+    size 𝑚 ⋅ 𝑘. Each bucketing thread monitors the flag corresponding
+    to the next index yet to be read. When the flag is set, that means         4.1. Experimental setup
+    there is a new element 𝑥 in that index, then all bucketing threads
+    read 𝑥 and insert them into their respective buckets independently.        Platform: All experiments were conducted on the NERSC Perlmutter
+    This allows for a lock-free (atomic) update. This also allows concur­      supercomputer, a HPE Cray EX system. For our experiments, we used
+    rent processing of the bucketing threads with the communicating            the CPU nodes (machines), each of which consists of two AMD EPYC
+    thread. Finally, when all senders have alerted the receiver with ter­      7763 (Milan) CPUs (with 64 cores per CPU), 256 MB L3 cache, 512
+    mination, the receiver compares the best solution across the buckets       GB of DDR4 memory, and a HPE Slingshot 11 NIC. Experiments were
+    with the best local solutions at the senders, and outputs the final        performed using up to 𝑚 = 512 nodes (with a total of 32K cores). All
+    seed set.                                                                  runtimes are measured in terms of wall clock time and reported in sec­
+                                                                               onds, and all distributed runs were executed by binding one MPI rank
+Runtime complexity: As for the runtime complexity, step S1 (sampling)          per node.
+takes (𝜃∕𝑚) ⋅ 𝓁𝑠 , where 𝓁𝑠 is the average length of a sample. Given the
+same set of edge probabilities, this average is expected to be more for
+                                                                               Input data: We use nine real world networks from SNAP [31] and
+the IC model than for LT. Step S2 is an all-to-all communication step and
+                     𝑛                                                         KONECT [32] summarized in Table 3. The inputs cover a wide range
+can take (𝜏𝑚 + 𝜇 𝜃) in the worst-case, where 𝜏 and 𝜇 are the network
+                     𝑚                                                         in sizes, and application domains such as social networks, citation net­
+latency and reciprocal of bandwidth respectively. Note that the size of
+                                                                               works and web documents. Since edge probabilities are not available
+each covering set to be received is upper bounded by 𝜃 and in practice is
+                                                                               for these public networks, consistent with practice [12,13,33], we gen­
+likely to be less (depends on its 𝑛∕𝑚 vertex subset). Also, even though the
+                                                                               erated edge probabilities from a uniform random distribution between
+receiver process sends out the samples it generated, it will not receive
+                                                                               [0, 0.1]. Note that the weighted cascade (WC) model (i.e., edge weight
+any data (from the all-to-all) as all the local max-k-cover happen at
+                                                                               from node 𝑢 to 𝑣 is given by 1∕𝐼𝑛𝐷𝑒𝑔𝑟𝑒𝑒(𝑣))-as has been used in
+the senders. The remaining part of the sender process (S3) is consumed
+                                                                               [14]-is not an option as it has been shown [34] to not translate to
+in generating local seeds from its local (𝑛∕𝑚) covering subsets. Using
+                                      𝑘𝜃𝑛                                      more generic diﬀusion models.
+the greedy algorithm, this takes (       ).
+                                       𝑚
+    As for the receiver process (S4), the communication time is domi­
+nated by the nonblocking receive to collect all the streamed seeds, and        Evaluation methodology: Our experiments include both IC and LT dif­
+the computation time by the time to insert into the local 𝐵 buckets.           fusion models. For related work comparison, we compared our new
+However, considering masking and the parallel processing of buckets,           implementations against two state-of-the-art distributed IMM methods,
+we expect communication (or wait time for data to arrive) to dominate          namely Ripples [12] and DiIMM [14]. Ripples is available as an open
+the total time—which is desirable to ensure the receiver is available          source software [35] and we compared with the C/C++ and OpenMP
+for all senders. The 𝑢∕𝑙 ratio of the number of buckets in the stream­         + MPI distributed implementation. The DiIMM software however was
+
+
+                                                                           7
+R. Barik, W. Cappa, S.M. Ferdous et al.
+                                                                                                       Journal of Parallel and Distributed Computing 198 (2025) 105037
+Table 4
+Performance of GreediRIS implementations, Ripples [12] and our implemen­
+tation of DiIMM [14]. All results reported were using 𝑚 = 512 nodes and 32K
+cores in distributed memory. GreediRIS-trunc runs were performed using
+𝛼 = 0.125. Bold values indicate the best entries for that input.
+  Diﬀusion: LT                               Time (in Sec.)
+  Input             Ripples [8]     DiIMM [14]    GreediRIS   GreediRIS-trunc
+
+  Github            108.3           114.7         1.8         0.2
+  HepPh             273.1           270.1         1.8         0.5
+  DBLP              365.0           357.7         3.7         3
+  Pokec             435.1           434.9         11.6        9.5
+  LiveJournal       482.1           478.0         22.0        22.9
+  Orkut             463.4           458.1         18.7        18.2
+  Orkut-group       549.4           564.6         81.7        78.6
+  wikipedia         537.0           528.4         45.0        46.6
+  friendster        948.2           994.9         746.1       685.9
+
+  Diﬀusion: IC                               Time (in Sec.)
+
+  Github            122.0           112.0         0.9         0.3
+  HepPh             175.0           185.5         1.5         0.6
+  DBLP              266.0           274.7         2.4         1.1                   Fig. 3. Strong scaling performance of GreediRIS for diﬀerent inputs, varying
+  Pokec             96.0            101.4         77.4        30.3
+                                                                                    𝑚 up to 512 nodes for the IC model. All times are in seconds.
+  LiveJournal       129.0           146.4         100.0       64.3
+  Orkut             74.5            88.2          32.5        6.3
+  Orkut-group       164.3           181.1         119.1       60.6                  sponding speedups ranged from 1.38× (for friendster) to 526.13× (for
+  wikipedia         360.3           287.5         256.0       222                   Github), with a geometric mean of 36.35× across all inputs. The results
+  friendster        278.0           319.0         361.0       211.2
+                                                                                    also show that GreediRIS ben­fits in runtime savings from trunca­
+                                                                                    tion. Overall, these runtime results uniformly show the eﬀectiveness
+                                                                                    of our RandGreedi-based distributed streaming as well as truncation
+not available as of this writing.1 Therefore, to enable a comparison, we
+                                                                                    for the seed selection step. The variations of speedups with inputs and
+implemented our own version of their method into the Ripples open
+                                                                                    models used are to be expected due to the eﬀects of graph topology
+source package [14]. Additionally, we also added the functionality of
+                                                                                    and stochasticity of the process. Relative to IC, the performance bene­
+using OPIM [9] (instead of IMM) as the underlying RIS-based InfMax
+                                                                                    ﬁts from GreediRIS under LT are more because it has been known to
+strategy into GreediRIS.
+                                                                                    generate shallower BFS traversals (i.e., shorter RRR set sizes).
+    For our proposed approach, GreediRIS, we tested two variants of
+                                                                                        We also compared the quality of seeds generated by GreediRIS
+our distributed algorithm:
+                                                                                    and GreediRIS-trunc, against the quality of seeds generated by Rip­
+                                                                                    ples. On average across all data sets, we observed that while using
+   • GreediRIS: uses the distributed streaming algorithm described in               𝑚 = 512 nodes, the expected i­fluence achieved by the seeds generated
+     §3.3 and its parallelization in §3.4;                                          by GreediRIS and GreediRIS-trunc implementations was 2.72%
+   • GreediRIS-trunc: uses the truncated extension of GreediRIS,                    away from the i­fluence generated by Ripples. This is despite reduced
+     described in §3.3.2, with 𝛼 fraction of the seeds communicated.                worst-case approximations (as shown in the Lemmas of §3.3) relative to
+                                                                                    Ripples which is (1 − 1∕𝑒 − 𝜀)-approximate. For instance, our experimen­
+    All runs not using OPIM were carried out for 𝑘 = 100 and precision              tal settings for 𝜀 = 0.13 and 𝛿 = 0.077 yield a worst-case approximation
+parameter 𝜀 = 0.13. For streaming, we chose 𝛿 = 0.077-as this co­figu­             ratio of 0.123 in expectation for GreediRIS (compared to a 0.5 ratio for
+ration set the number of buckets approximately equal to the number of               Ripples). These results show that despite being weaker in approximation
+available threads (63) at the global receiver. GreediRIS-trunc was                  guarantee, the practical quality of GreediRIS and GreediRIS-trunc
+run for values of 𝛼 ∈ (0, 1]. For the experiments using OPIM, we set                is comparable to Ripples, while providing signiﬁcant performance ad­
+𝑘 = 1000, 𝜀 = 0.01, and adjusted 𝛿 = 0.0562 to maintain the number of               vantage.
+buckets at 63.
+    All implementations were compiled using (GCC 11.2.0; optimization               4.3. Performance evaluation for GreediRIS
+ﬂags -O3 and -mtune=native), and MPI library Cray-mpich 8.1.24.
+For quality, we use the average number of node (vertex) activations                     Next, we present a detailed parallel performance evaluation of our
+over 5 simulations of the diﬀusion models (IC or LT) from the seed sets             GreediRIS implementations. We first present the strong scaling results
+obtained by Ripples as the baseline, with the same for other implemen­              for our main GreediRIS implementation. Fig. 3 shows the strong scal­
+tations presented as a percentage change.                                           ing results. In the interest of space, we show results using the IC model.
+                                                                                    Results for smaller inputs (Github, HepPh, DBLP) that took less than 3
+4.2. Comparative evaluation                                                         seconds, are omitted. On the remaining inputs, in general we see better
+                                                                                    scaling behavior as the input size increases—e.g., scaling on LiveJour­
+   Table 4 shows comparative results in terms of runtime perfor­                    nal is near-linear until 𝑚 = 128, while the further runtime reductions are
+mance. GreediRIS-trunc was the fastest for nearly all inputs,                       continued to be achieved for up to 𝑚 = 256 with Orkut-group, and up
+with GreediRIS coming a close second. For all inputs tested, both                   to 𝑚 = 512 with Wikipedia and friendster. In general, we observed that
+GreediRIS implementations signiﬁcantly outperformed Ripples and                     GreediRIS is able to push the scaling to larger number of nodes, be­
+DiIMM. For instance, for LT, the speedups of GreediRIS-trunc over                   yond what Ripples achieves. This is illustrated in Fig. 4 where we see the
+Ripples ranged from 1.32× (for friendster) to 357.78× (for Github),                 scaling ben­fits of using GreediRIS over Ripples for a representative
+with a geometric mean of 28.99× across all inputs. For IC, the corre­               input like Orkut-group. GreediRIS-trunc helps push this boundary
+                                                                                    even further with more results shown at the end of this Section.
+                                                                                        Fig. 5 shows the detailed runtime breakdown for a representative in­
+ 1
+   We were not able to find its public repository and the authors did not respond   put LiveJournal for the IC diﬀusion model. For sender time, we used the
+despite multiple requests.                                                          time for the longest running sender. As Fig. 5a corresponding to the total
+
+
+                                                                                8
+R. Barik, W. Cappa, S.M. Ferdous et al.
+                                                                                                             Journal of Parallel and Distributed Computing 198 (2025) 105037
+                                                                                        the non-blocking receive, which implies high availability to the senders.
+                                                                                        The bucketing threads generally take signiﬁcantly much less time, and
+                                                                                        their running times are subsumed within the communicating thread’s
+                                                                                        time. Note that there are 63 threads to handle the buckets.
+
+                                                                                        Evaluation of GreediRIS-trunc: In this section, we tested the frame­
+                                                                                        work’s truncated variant, GreediRIS-trunc (§3.3.2) by varying the
+                                                                                        parameter 𝛼 . Note that 𝛼 is the fraction of seeds sent from each sender
+                                                                                        to the global receiver. Increasing the number of nodes leads to a pro­
+                                                                                        portional increase in the communication and computation performed by
+                                                                                        the global receiver.
+                                                                                            The parameter 𝛼 provides a way to cap this load on the receiver
+                                                                                        and extend scaling. This can be seen in Fig. 6(a), where the parallel
+                                                                                        runtime for GreediRIS starts to plateau for GreediRIS for 𝑚 ≥ 256,
+                                                                                        while for GreediRIS-trunc it continues to decrease (mainly due to
+                                                                                        decrease in 𝛼 ). While decreasing 𝛼 results in a lower approximation
+                                                                                        guarantee (Lemma 3.3) and consequently degrade quality, our experi­
+                                                                                        ments showed this to be negligible (less than 0.36%) in practice for any
+Fig. 4. Scaling of the total execution time for our methods GreediRIS and               given 𝑚.
+GreediRIS-trunc on up to 512 Perlmutter nodes for input Orkut-group. Also
+shown is the scaling behavior of the state-of-the-art tool Ripples.                     4.4. Extension of GreediRIS to OPIM
+
+                                                                                            In this section, we show OPIM results integrated to the GreediRIS
+breakdown shows, the total time is closer to the maximum of the sender                  framework. Consistent with the large scale experimental settings of [9],
+and receiver times than the sum, and these two times are nearly com­                    we set 𝑘 = 1000, 𝜀 = 0.01, and terminate when the number of generated
+parable - suggesting the eﬀectiveness of streaming. The sender times                   samples exceeds 220 . We set 𝛿 = 0.0562 to ensure the number of buckets
+were evenly split between sampling and all-to-all. We see the sampling                  at the receiver is 63 (1 communicating thread vs. 63 bucketing threads).
+and all-to-all times scaling with 𝑚. The seed selection, however, starts                The number of nodes was set to 𝑚 = 512.
+to consume more time at the receiver for larger 𝑚 (≥ 256) settings.                         For evaluation, we used the GreediRIS-trunc implementation
+    This is something the truncated version (GreediRIS-trunc) is bet­                   that uses OPIM internally, and studied the seed-selection performance.
+ter equipped to address, as we will see next.                                           Results are shown in Table 5. As can be observed, we are able to achieve
+    We also examine the receiver process time closely for the same in­                  signiﬁcant reduction in time with increasing 𝛼 , while maintaining the
+put in Fig. 5b, since the global seed selection using streaming is carried              reported approximation guarantee (as reported by OPIM using the mar­
+out at the receiver. Recall that at the receiver, thread rank 0 is the com­             tingale based analysis in [9]).
+municating thread, as it monitors the communication channel by doing a
+non-blocking receive, and when the next seed arrives, it pushes it to the               5. Conclusions and future work
+local queue. All other 𝑡 − 1 threads (i.e., 63) are bucketing threads, han­
+dling insertions individually into a subset of ⌈𝐵∕(𝑡 − 1)⌉ buckets. The                    We presented GreediRIS, a new scalable distributed streaming al­
+results show that the communicating thread spends most of its time on                   gorithm and its parallel implementations for InfMax. New ideas in­
+
+
+
+
+Fig. 5. Parallel runtime breakdown for input LiveJournal (Diﬀusion model IC) for GreediRIS: by the receiver, sender (longest running), and the total times. Note that
+in streaming, senders and the receiver run in parallel. The plot corresponding to the receiver shows the breakdown between its communicating thread and bucketing
+threads. Note that the majority of the SeedSelect time on the receiver is idle time, as senders participate in the all-to-all and then perform their local seed selections.
+
+
+
+                                                                                  9
+R. Barik, W. Cappa, S.M. Ferdous et al.
+                                                                                                        Journal of Parallel and Distributed Computing 198 (2025) 105037
+                                                                                  Acknowledgment
+
+                                                                                     This work is in part supported NSF grants CCF 2316160 and CCF
+                                                                                  1919122 to Washington State University. At Pacific Northwest National
+                                                                                  Laboratory, this work is also supported by the U.S. Department of Energy
+                                                                                  through the Exascale Computing Project (17-SC-20-SC) (ExaGraph) and
+                                                                                  Laboratory Directed Research and Development (LDRD).
+
+                                                                                  Data availability
+
+                                                                                      All data sets used are public and cited in the paper.
+
+                                                                                  References
+
+                                                                                   [1] P. Domingos, M. Richardson, Mining the network value of customers, in: Proceedings
+                                                                                       of the Seventh ACM SIGKDD International Conference on Knowledge Discovery and
+                                                                                       Data Mining, 2001, pp. 57--66.
+                                                                                   [2] J. Leskovec, A. Krause, C. Guestrin, C. Faloutsos, J.M. VanBriesen, N.S. Glance, Cost­
+                                                                                       effective outbreak detection in networks, in: Proceedings of the 13th ACM SIGKDD
+Fig. 6. Strong scaling plot of GreediRIS (top) and GreediRIS-trunc (bot­               International Conference on Knowledge Discovery and Data Mining, ACM, 2007,
+                                                                                       pp. 420--429.
+tom) to up to 512 nodes. The seed selection step is shown as the shaded region
+                                                                                   [3] C. Budak, D. Agrawal, A.E. Abbadi, Limiting the spread of misinformation in social
+representing its fraction of the total runtime.
+                                                                                       networks, in: Proceedings of the 20th International Conference on World Wide Web,
+                                                                                       WWW, ACM, 2011, pp. 665--674.
+        Table 5                                                                    [4] M. Ye, X. Liu, W. Lee, Exploring social i­fluence for recommendation: a generative
+        Evaluation of GreediRIS-trunc using the OPIM RIS-strategy                      model approach, in: Proc. of the 35th International ACM SIGIR Conference on Re­
+        [9], and using parameters: {𝑘 = 1000, 𝜀 = 0.01, target 𝜃 ≈ 220 ,               search and Development in Information Retrieval, SIGIR, ACM, 2012, pp. 671--680.
+                                                                                   [5] D. Kempe, J.M. Kleinberg, E. Tardos, Maximizing the spread of i­fluence through a
+        𝛿 = 0.0562}. All runs were performed on the friendster input on
+                                                                                       social network, in: Proceedings of the Ninth ACM SIGKDD International Conference
+        𝑚 = 512 nodes.                                                                 on Knowledge Discovery and Data Mining, Washington, DC, USA, August 24--27,
+           Truncation factor 𝛼 :          1        0.5      0.25    0.125              2003, 2003, pp. 137--146.
+                                                                                   [6] M. Azaouzi, W. Mnasri, L.B. Romdhane, New trends in i­fluence maximization mod­
+           Seed select time (sec):        381.42   200.59   99.30   95.43              els, Comput. Sci. Rev. 40 (2021) 100393.
+           OPIM approx. guarantee:        0.66     0.67     0.68    0.69           [7] G.L. Nemhauser, L.A. Wolsey, M.L. Fisher, An analysis of approximations for maxi­
+                                                                                       mizing submodular set functions—I, Math. Program. 14 (1978) 265--294.
+                                                                                   [8] Y. Tang, Y. Shi, X. Xiao, I­fluence maximization in near-linear time: a martingale
+clude a) leveraging the RandGreedi framework for distributed sub­                      approach, in: Proceedings of the 2015 ACM SIGMOD International Conference on
+modular optimization for InfMax, b) introducing streaming into dis­                    Management of Data, 2015, pp. 1539--1554.
+                                                                                   [9] J. Tang, X. Tang, X. Xiao, J. Yuan, Online processing algorithms for i­fluence max­
+tributed max-k-cover allowing eﬃcient masking of communication
+                                                                                       imization, in: Proceedings of the 2018 International Conference on Management of
+overheads through overlapped computation; and c) truncation to further                 Data, 2018, pp. 991--1005.
+reduce communication burden. The experimental study demonstrated                  [10] C. Borgs, M. Brautbar, J. Chayes, B. Lucier, Maximizing social i­fluence in nearly
+that GreediRIS signiﬁcantly outperforms state-of-the-art distributed                   optimal time, in: Proceedings of the Twenty-Fifth Annual ACM-SIAM Symposium on
+parallel implementations with comparable quality. The algorithms pre­                  Discrete Algorithms, SIAM, 2014, pp. 946--957.
+                                                                                  [11] Y. Tang, X. Xiao, Y. Shi, I­fluence maximization: near-optimal time complexity meets
+sented are generalizable to any other monotone submodular optimiza­
+                                                                                       practical eﬃciency, in: Proceedings of the 2014 ACM SIGMOD International Confer­
+tion problem. Future extensions and directions could include: i) enabling              ence on Management of Data, 2014, pp. 75--86.
+streaming during the sampling phase to mask all-to-all communication              [12] M. Minutoli, M. Halappanavar, A. Kalyanaraman, A. Sathanur, R. Mcclure, J. McDer­
+costs; ii) further optimizations to increase problem size reach to solve               mott, Fast and scalable implementations of i­fluence maximization algorithms, in:
+larger problems on smaller systems; iii) GPU acceleration for sampling;                2019 IEEE International Conference on Cluster Computing, CLUSTER, IEEE, 2019,
+                                                                                       pp. 1--12.
+and iv) extension to other monotone submodular optimization prob­                 [13] M. Minutoli, M. Drocco, M. Halappanavar, A. Tumeo, A. Kalyanaraman, cuRipples:
+lems.                                                                                  i­fluence maximization on multi-gpu systems, in: Proceedings of the 34th ACM In­
+                                                                                       ternational Conference on Supercomputing, 2020, pp. 1--11.
+CRediT authorship contribution statement                                          [14] J. Tang, Y. Zhu, X. Tang, K. Han, Distributed i­fluence maximization for large-scale
+                                                                                       online social networks, in: 2022 IEEE 38th International Conference on Data Engi­
+                                                                                       neering, ICDE, IEEE, 2022, pp. 81--95.
+    Reet Barik: Writing -- review & editing, Writing -- original draft,           [15] B. Mirzasoleiman, A. Badanidiyuru, A. Karbasi, J. Vondrák, A. Krause, Lazier than
+Validation, Software, Methodology, Conceptualization. Wade Cappa:                      lazy greedy, in: Proceedings of the Twenty-Ninth AAAI Conference on Art­ficial In­
+Writing -- review & editing, Writing -- original draft, Validation, Soft­              telligence, AAAI Press, 2015, pp. 1812--1818.
+ware, Methodology. S.M. Ferdous: Writing -- review & editing, Writing --          [16] R. da Ponte Barbosa, A. Ene, H.L. Nguyen, J. Ward, The power of randomization: dis­
+                                                                                       tributed submodular maximization on massive datasets, in: Proceedings of the 32nd
+original draft, Methodology, Formal analysis, Conceptualization. Marco
+                                                                                       International Conference on Machine Learning, ICML, vol. 37, 2015, pp. 1236--1244,
+Minutoli: Writing -- review & editing, Writing -- original draft, Vali­                JMLR.org.
+dation, Software, Methodology. Mahantesh Halappanavar: Writing --                 [17] W. Chen, C. Wang, Y. Wang, Scalable i­fluence maximization for prevalent viral
+review & editing, Writing -- original draft, Software, Methodology, Fund­              marketing in large-scale social networks, in: Proceedings of the 16th ACM SIGKDD
+ing acquisition. Ananth Kalyanaraman: Writing -- review & editing,                     International Conference on Knowledge Discovery and Data Mining, ACM, 2010,
+                                                                                       pp. 1029--1038.
+Writing -- original draft, Project administration, Methodology, Investi­
+                                                                                  [18] W. Chen, Y. Yuan, L. Zhang, Scalable i­fluence maximization in social networks
+gation, Funding acquisition, Conceptualization.                                        under the linear threshold model, in: The Proc. of 10th IEEE International Conference
+                                                                                       on Data Mining, ICDM, IEEE Computer Society, 2010, pp. 88--97.
+Declaration of competing interest                                                 [19] W. Chen, An issue in the martingale analysis of the i­fluence maximization algorithm
+                                                                                       imm, arXiv:1808.09363, 2018.
+                                                                                  [20] M. Minutoli, P. Sambaturu, M. Halappanavar, A. Tumeo, A. Kalyananaraman, A.
+    The authors declare that they have no known competing financial                    Vullikanti, PREEMPT: scalable epidemic interventions using submodular optimiza­
+interests or personal relationships that could have appeared to i­fluence              tion on multi-gpu systems, in: SC20: International Conference for High Performance
+the work reported in this paper.                                                       Computing, Networking, Storage and Analysis, IEEE, 2020, pp. 1--15.
+
+
+
+                                                                             10
+R. Barik, W. Cappa, S.M. Ferdous et al.
+                                                                                                                     Journal of Parallel and Distributed Computing 198 (2025) 105037
+[21] R. Barik, M. Minutoli, M. Halappanavar, A. Kalyanaraman, Impart: a partitioning­                                       Wade Cappa received his bachelor’s degree in Computer
+     based parallel approach to accelerate i­fluence maximization, in: 2022 IEEE 29th                                  Science from Washington State University in 2023. Since then,
+     International Conference on High Performance Computing, Data, and Analytics,                                      he has been working at Palantir Technologies on network-to­
+     HiPC, IEEE, 2022, pp. 125--134.                                                                                   network data sharing and consistency systems. Wade started
+[22] B. Mirzasoleiman, A. Karbasi, R. Sarkar, A. Krause, Distributed submodular                                        working on HPC applications while he was studying for his un­
+                                                                                                                       dergraduate degree, and has continued working on research in his
+     maximization: identifying representative elements in massive data, in: Proc. of
+                                                                                                                       free time. Since graduation, his research has focused on parallel
+     the 27th Annual Conference on Neural Information Processing Systems, 2013,
+                                                                                                                       and distributed algorithms and their applications.
+     pp. 2049--2057.
+[23] V.S. Mirrokni, M. Zadimoghaddam, Randomized composable core-sets for dis­
+     tributed submodular maximization, in: Proceedings of the Forty-Seventh Annual                                           Dr. SM Ferdous joined the Pacific Northwest National Lab­
+     ACM on Symposium on Theory of Computing, STOC, ACM, 2015, pp. 153--162.                                           oratory as a Linus Pauling Postdoctoral fellow in June 2022 and
+                                                                                                                       is now a data scientist at PNNL. He received his Bachelor’s and
+[24] U. Feige, A threshold of ln n for approximating set cover, J. ACM 45 (1998) 634--652,
+                                                                                                                       master’s in computer science and engineering from Bangladesh
+     https://doi.org/10.1145/285055.285059.
+                                                                                                                       University of Engineering and Technology (BUET), and PhD from
+[25] M. Minoux, Accelerated greedy algorithms for maximizing submodular set functions,                                 Purdue University. His research interest is in combinatorial scien­
+     in: Proceedings of the 8th IFIP Conference on Optimization Techniques, Springer,                                  tific computing, focusing on computing under various constraints
+     1977, pp. 234--243.                                                                                               such as memory limitations, dynamic data, or approximation al­
+[26] A. Gupta, A. Roth, G. Schoenebeck, K. Talwar, Constrained non-monotone submodu­                                   gorithms.
+     lar maximization: oﬄine and secretary algorithms, in: Proc. of the 6th International
+     Workshop of Internet and Network Economics, WINE, in: Lecture Notes in Computer
+                                                                                                                            Dr. Marco Minutoli is a data scientist at the Pacific North­
+     Science, vol. 6484, Springer, 2010, pp. 246--257.
+                                                                                                                       west National Laboratory. He received his Bachelor of Science
+[27] A. Badanidiyuru, J. Vondrák, Fast algorithms for maximizing submodular functions,                                 in Computer and Telecommunication Engineering from Univer­
+     in: Proceedings of the Twenty-Fifth Annual ACM-SIAM Symposium on Discrete Al­                                     sity of Messina, Messina, Italy, in 2008, his Master of Science in
+     gorithms, SODA, SIAM, 2014, pp. 1497--1514.                                                                       Computer Engineering from Politecnico di Milano, Milan, Italy,
+[28] A. McGregor, H.T. Vu, Better streaming algorithms for the maximum coverage prob­                                  in 2014, and his PhD in Computer Science from Washington State
+     lem, Theory Comput. Syst. 63 (2019) 1595--1619, https://doi.org/10.1007/s00224-                                   University, Pullman, WA, in 2021. His research focuses on the de­
+     018-9878-x.                                                                                                       sign of parallel graph algorithms for combinatorial scientific com­
+[29] M. Bateni, H. Esfandiari, V.S. Mirrokni, Almost optimal streaming algorithms for                                  puting and on the deﬁnition of HW/SW co-design and High-Level
+     coverage problems, in: Proceedings of the 29th ACM Symposium on Parallelism in                                    Synthesis methodologies and their compilation and optimization
+     Algorithms and Architectures, SPAA, ACM, 2017, pp. 13--23.                               pipelines for the generation of custom computing devices optimized for irregular applica­
+                                                                                              tions.
+[30] R. Barik, et al., GreediRIS: scalable i­fluence maximization using distributed stream­
+     ing maximum cover, https://github.com/ReetBarik/GreediRIS, 2023. (Accessed July
+     2023), Online.                                                                                                        Dr. Mahantesh Halappanavar is a chief data scientist at the
+[31] J. Leskovec, A. Krevl, SNAP datasets: Stanford large network dataset collection,                                 Pacific Northwest National Laboratory, where he serves as the
+     http://snap.stanford.edu/data, 2014.                                                                             group lead of the Data Science and Machine Intelligence group.
+                                                                                                                      He also holds a joint appointment as adjunct faculty in computer
+[32] J. Kunegis, Konect: the Koblenz network collection, in: Proceedings of the 22nd In­
+                                                                                                                      science at the School of Electrical Engineering and Computer Sci­
+     ternational Conference on World Wide Web, 2013, pp. 1343--1350.
+                                                                                                                      ence at Washington State University in Pullman. His research has
+[33] Y. Li, J. Fan, Y. Wang, K. Tan, I­fluence maximization on social graphs: a sur­                                  spanned multiple technical foci and includes combinatorial scien­
+     vey, IEEE Trans. Knowl. Data Eng. 30 (2018) 1852--1872, https://doi.org/10.1109/                                 tific computing, parallel graph algorithms, art­ficial intelligence
+     TKDE.2018.2807843.                                                                                               and machine learning, and the application of graph theory and
+[34] A. Arora, S. Galhotra, S. Ranu, Debunking the myths of i­fluence maximization:                                   game theory to solve problems in application domains, such as
+     an in-depth benchmarking study, in: Proceedings of the 2017 ACM International            scientific computing, power grids, cybersecurity, and life sciences.
+     Conference on Management of Data, 2017, pp. 651--666.
+[35] M. Minutoli, Ripples: a C++ library of parallel implementations for distributed in­                                   Dr. Ananth Kalyanaraman received his bachelor’s degree
+     ﬂuence maximization, https://github.com/pnnl/ripples/tree/master, 2019.                                          from the Visvesvaraya National Institute of Technology, Nagpur,
+                                                                                                                      India, in 1998, and the M.S. and Ph.D. degrees from Iowa State
+                                                                                                                      University, Ames, IA, USA, in 2002 and 2006, respectively. He is
+                             Reet Barik received his bachelor’s degree in Computer Sci­                               a Professor and Boeing Centennial Chair of computer science, and
+                         ence and Engineering from the Maulana Abul Kalam Azad Uni­                                   the Interim Director for the School of Electrical Engineering and
+                         versity of Technology, West Bengal, India, in 2017, and a M.S.                               Computer Science, Washington State University, Pullman, WA,
+                         degree in Computer Science from Washington State University,                                 USA. He also holds a joint appointment with Pacific Northwest
+                         Pullman, WA, USA, in 2019 where he is currently a PhD can­                                   National Laboratory, Richland, WA, USA. Ananth is the Direc­
+                         didate. His research area is at the intersection of parallel graph                           tor for the AgAID Institute. His research focuses on developing
+                         algorithms, combinatorial optimization, and high performance         parallel algorithms and software for data-intensive problems originating in the areas of
+                         computing under the general umbrella of scalable data science.       computational biology and graph-theoretic applications.
+
+
+
+
+                                                                                         11
+

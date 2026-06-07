@@ -1,0 +1,838 @@
+                  Cost-effective Outbreak Detection in Networks
+
+                      Jure Leskovec                                   Andreas Krause                          Carlos Guestrin
+               Carnegie Mellon University                        Carnegie Mellon University              Carnegie Mellon University
+                  Christos Faloutsos                               Jeanne VanBriesen                          Natalie Glance
+               Carnegie Mellon University                        Carnegie Mellon University                  Nielsen BuzzMetrics
+
+
+
+
+ABSTRACT
+Given a water distribution network, where should we place
+sensors to quickly detect contaminants? Or, which blogs
+should we read to avoid missing important stories?
+   These seemingly diﬀerent problems share common struc-
+ture: Outbreak detection can be modeled as selecting nodes
+(sensor locations, blogs) in a network, in order to detect the
+spreading of a virus or information as quickly as possible.                          Figure 1: Spread of information between blogs.
+   We present a general methodology for near optimal sensor                          Each layer shows an information cascade. We want
+placement in these and related problems. We demonstrate                              to pick few blogs that quickly capture most cascades.
+that many realistic outbreak detection objectives (e.g., de-
+tection likelihood, population aﬀected) exhibit the prop-
+erty of “submodularity”. We exploit submodularity to de-                             cess spreading over this network, and we want to select a set
+velop an eﬃcient algorithm that scales to large problems,                            of nodes to detect the process as eﬀectively as possible.
+achieving near optimal placements, while being 700 times                                Many real-world problems can be modeled under this set-
+faster than a simple greedy algorithm. We also derive on-                            ting. Consider a city water distribution network, delivering
+line bounds on the quality of the placements obtained by                             water to households via pipes and junctions. Accidental or
+any algorithm. Our algorithms and bounds also handle cases                           malicious intrusions can cause contaminants to spread over
+where nodes (sensor locations, blogs) have diﬀerent costs.                           the network, and we want to select a few locations (pipe
+   We evaluate our approach on several large real-world prob-                        junctions) to install sensors, in order to detect these contam-
+lems, including a model of a water distribution network from                         inations as quickly as possible. In August 2006, the Battle of
+the EPA, and real blog data. The obtained sensor place-                              Water Sensor Networks (BWSN) [19] was organized as an in-
+ments are provably near optimal, providing a constant frac-                          ternational challenge to ﬁnd the best sensor placements for a
+tion of the optimal solution. We show that the approach                              real (but anonymized) metropolitan area water distribution
+scales, achieving speedups and savings in storage of several                         network. As part of this paper, we present the approach we
+orders of magnitude. We also show how the approach leads                             used in this competition. Typical epidemics scenarios also
+to deeper insights in both applications, answering multicrite-                       ﬁt into this outbreak detection setting: We have a social net-
+ria trade-oﬀ, cost-sensitivity and generalization questions.                         work of interactions between people, and we want to select a
+                                                                                     small set of people to monitor, so that any disease outbreak
+Categories and Subject Descriptors: F.2.2 Analysis of                                can be detected early, when very few people are infected.
+Algorithms and Problem Complexity: Nonnumerical Algo-                                   In the domain of weblogs (blogs), bloggers publish posts
+rithms and Problems                                                                  and use hyper-links to refer to other bloggers’ posts and
+General Terms: Algorithms; Experimentation.                                          content on the web. Each post is time stamped, so we can
+Keywords: Graphs; Information cascades; Virus propaga-                               observe the spread of information on the “blogosphere”. In
+tion; Sensor Placement; Submodular functions.                                        this setting, we want to select a set of blogs to read (or re-
+                                                                                     trieve) which are most up to date, i.e., catch (link to) most
+                                                                                     of the stories that propagate over the blogosphere. Fig. 1
+1.     INTRODUCTION                                                                  illustrates this setting. Each layer plots the propagation
+  We explore the general problem of detecting outbreaks in                           graph (also called information cascade [3]) of the informa-
+networks, where we are given a network and a dynamic pro-                            tion. Circles correspond to blog posts, and all posts at the
+                                                                                     same vertical column belong to the same blog. Edges indi-
+                                                                                     cate the temporal ﬂow of information: the cascade starts at
+                                                                                     some post (e.g., top-left circle of the top layer of Fig. 1) and
+Permission to make digital or hard copies of all or part of this work for            then the information propagates recursively by other posts
+personal or classroom use is granted without fee provided that copies are
+not made or distributed for profit or commercial advantage and that copies
+                                                                                     linking to it. Our goal is to select a small set of blogs (two in
+bear this notice and the full citation on the first page. To copy otherwise, to      case of Fig. 1) which “catch” as many cascades (stories) as
+republish, to post on servers or to redistribute to lists, requires prior specific   possible1 . A naive, intuitive solution would be to select the
+permission and/or a fee.                                                             1
+KDD’07, August 12–15, 2007, San Jose, California, USA.                                 In real-life multiple cascades can be on the same or similar
+Copyright 2007 ACM 978-1-59593-609-7/07/0008 ...$5.00.                               story, but we still aim to detect as many as possible.
+big, well-known blogs. However, these usually have a large
+number of posts, and are time-consuming to read. We show,
+that, perhaps counterintuitively, a more cost-eﬀective solu-
+tion can be obtained, by reading smaller, but higher quality,
+blogs, which our algorithm can ﬁnd.
+   There are several possible criteria one may want to opti-
+mize in outbreak detection. For example, one criterion seeks
+to minimize detection time (i.e., to know about a cascade as
+soon as possible, or avoid spreading of contaminated water).      Figure 2: Blogs have posts, and there are time
+Similarly, another criterion seeks to minimize the population     stamped links between the posts. The links point
+aﬀected by an undetected outbreak (i.e., the number of blogs      to the sources of information and the cascades grow
+referring to the story we just missed, or the population con-     (information spreads) in the reverse direction of the
+suming the contamination we cannot detect). Optimizing            edges. Reading only blog B6 captures all cascades,
+these objective functions is NP-hard, so for large, real-world    but late. B6 also has many posts, so by reading B1
+problems, we cannot expect to ﬁnd the optimal solution.           and B2 we detect cascades sooner.
+   In this paper, we show, that these and many other realis-
+tic outbreak detection objectives are submodular, i.e., they      the time diﬀerence between the source and destination post,
+exhibit a diminishing returns property: Reading a blog (or        e.g., post p41 linked p12 one day after p12 was published).
+placing a sensor) when we have only read a few blogs pro-            These outbreaks (e.g., information cascades) initiate from
+vides more new information than reading it after we have          a single node of the network (e.g., p11 , p12 and p31 ), and
+read many blogs (placed many sensors).                            spread over the graph, such that the traversal of every edge
+   We show how we can exploit this submodularity prop-            (s, t) ∈ E takes a certain amount of time (indicated by the
+erty to eﬃciently obtain solutions which are provably close       edge labels). As soon as the event reaches a selected node,
+to the optimal solution. These guarantees are important in        an alarm is triggered, e.g., selecting blog B6 , would detect
+practice, since selecting nodes is expensive (reading blogs       the cascades originating from post p11 , p12 and p31 , after 6,
+is time-consuming, sensors have high cost), and we desire         6 and 2 timesteps after the start of the respective cascades.
+solutions which are not too far from the optimal solution.           Depending on which nodes we select, we achieve a certain
+   The main contributions of this paper are:                      placement score. Fig. 2 illustrates several criteria one may
+    • We show that many objective functions for detecting         want to optimize. If we only want to detect as many stories
+       outbreaks in networks are submodular, including de-        as possible, then reading just blog B6 is best. However, read-
+       tection time and population aﬀected in the blogosphere     ing B1 would only miss one cascade (p31 ), but would detect
+       and water distribution monitoring problems. We show        the other cascades immediately. In general, this placement
+       that our approach also generalizes work by [10] on se-     score (representing, e.g., the fraction of detected cascades,
+       lecting nodes maximizing inﬂuence in a social network.     or the population saved by placing a water quality sensor)
+    • We exploit the submodularity of the objective (e.g.,        is a set function R, mapping every placement A to a real
+       detection time) to develop an eﬃcient approximation        number R(A) (our reward), which we intend to maximize.
+       algorithm, CELF, which achieves near-optimal place-           Since sensors are expensive, we also associate a cost c(A)
+       ments (guaranteeing at least a constant fraction of the    with every placement A, and require, that this cost does
+       optimal solution), providing a novel theoretical result    not exceed a speciﬁed budget B which we can spend. For
+       for non-constant node cost functions. CELF is up to        example, the cost of selecting a blog could be the number of
+       700 times faster than simple greedy algorithm. We          posts in it (i.e., B1 has cost 2, while B6 has cost 6). In the
+       also derive novel online bounds on the quality of the      water distribution setting, accessing certain locations in the
+       placements obtained by any algorithm.                      network might be more diﬃcult (expensive) than other loca-
+    • We extensively evaluate our methodology on the ap-          tions. Also, we could have several types of sensors to choose
+       plications introduced above – water quality and blo-       from, which vary in their quality (detection accuracy) and
+       gosphere monitoring. These are large real-world prob-      cost. We associate a nonnegative cost c(s) with  every sensor
+       lems, involving a model of a water distribution network    s, and deﬁne the cost of placement A: c(A) = s∈A c(s).
+       from the EPA with millions of contamination scenar-           Using this notion of reward and cost, our goal is to solve
+       ios, and real blog data with millions of posts.            the optimization problem
+    • We show how the proposed methodology leads to deeper
+       insights in both applications, including multicriterion,                   max R(A) subject to c(A) ≤ B,               (1)
+                                                                                A⊆V
+       cost-sensitivity analyses and generalization questions.    where B is a budget we can spend for selecting the nodes.
+
+2.   OUTBREAK DETECTION                                           2.2 Placement objectives
+                                                                     An event i ∈ I from set I of scenarios (e.g., cascades,
+2.1 Problem statement                                             contaminant introduction) originates from a node s ∈ V of
+   The water distribution and blogosphere monitoring prob-        a network G = (V, E ), and spreads through the network, af-
+lems, despite being very diﬀerent domains, share essential        fecting other nodes (e.g., through citations, or ﬂow through
+structure. In both problems, we want to select a subset A of      pipes). Eventually, it reaches a monitored node s ∈ A ⊆ V
+nodes (sensor locations, blogs) in a graph G = (V, E ), which     (i.e., blogs we read, pipe junction we instrument with a sen-
+detect outbreaks (spreading of a virus/information) quickly.      sor), and gets detected. Depending on the time of detection
+   Fig. 2 presents an example of such a graph for blog net-       t = T (i, s), and the impact on the network before the detec-
+work. Each of the six blogs consists of a set of posts. Con-      tion (e.g., the size of the cascades missed, or the population
+nections between posts represent hyper-links, and labels show     aﬀected by a contaminant), we incur penalty πi (t). The
+penalty function πi (t) depends on the scenario. We discuss         A ⊆ B ⊆ V. Hence, adding sensors can only decrease the
+concrete examples of penalty functions below. Our goal is to        incurred penalty. Thirdly, and most importantly, it satisﬁes
+minimize the expected penalty over all possible scenarios i:        the following intuitive diminishing returns property: If we
+                         
+                π(A) ≡      P (i)πi (T (i, A)),                     add a sensor to a small placement A, we improve our score
+                           i                                        at least as much, as if we add it to a larger placement B ⊇ A.
+where, for a placement A ⊆ V, T (i, A) = mins∈A T (i, s) is         More formally, we can prove that
+the time until event i is detected by one of the sensors in A,
+                                                                       Theorem 1. For all placements A ⊆ B ⊆ V and sensors
+and P is a (given) probability distribution over the events.
+                                                                    s ∈ V \ B, it holds that
+   We assume πi (t) to be monotonically nondecreasing in t,
+i.e., we never prefer late detection if we can avoid it. We also             R(A ∪ {s}) − R(A) ≥ R(B ∪ {s}) − R(B).
+set T (i, ∅) = ∞, and set πi (∞) to some maximum penalty            A set function R with this property is called submodular.
+incurred for not detecting event i.                                 We give the proof of Thm. 1 and all other theorems in [15].
+Proposed alternative formulation. Instead of minimiz-                  Hence, both the blogosphere and water distribution mon-
+ing the penalty π(A), we can consider the scenario speciﬁc          itoring problems can be reduced to the problem of maxi-
+penalty reduction Ri (A) = πi (∞) − πi (T (i, A)), and the ex-      mizing a nondecreasing submodular function, subject to a
+pected penalty reduction                                            constraint on the budget we can spend for selecting nodes.
+                     
+             R(A) =      P (i)Ri (A) = π(∅) − π(A),                 More generally, any objective function that can be viewed as
+                      i                                             an expected penalty reduction is submodular. Submodular-
+describes the expected beneﬁt (reward) we get from placing          ity of R will be the key property exploited by our algorithms.
+the sensors. This alternative formulation has crucial prop-
+erties which our method exploits, as described below.               2.4 Multicriterion optimization
+Examples used in our experiments. Even though the                      In practical applications, such as the blogosphere and wa-
+water distribution and blogosphere monitoring problems are          ter distribution monitoring, we may want to simultaneously
+very diﬀerent, similar placement objective scores make sense        optimize multiple objectives. Then, each placement has a
+for both applications. The detection time T (i, s) in the blog      vector of scores, R(A) = (R1 (A), . . . , Rm (A)). Here, the
+setting is the time diﬀerence in days, until blog s partici-        situation can arise that two placements A1 and A2 are in-
+pates in the cascade i, which we extract from the data. In          comparable, e.g., R1 (A1 ) > R1 (A2 ), but R2 (A1 ) < R2 (A2 ).
+the water network, T (i, s) is the time it takes for contam-        So all we can hope for are Pareto-optimal solutions [4]. A
+inated water to reach node s in scenario i (depending on            placement A is called Pareto-optimal, if there does not exist
+outbreak location and time). In both applications we con-           another placement A such that Ri (A ) ≥ Ri (A) for all i,
+sider the following objective functions (penalty reductions):       and Rj (A ) > Rj (A) for some j (i.e., there is no placement
+   (a) Detection likelihood (DL): fraction of information cas-      A which is at least as good as A in all objectives Ri , and
+cades and contamination events detected by the selected             strictly better in at least one objective Rj ).
+nodes. Here, the penalty is πi (t) = 0, and πi (∞) = 1,                One common approach for ﬁnding such Pareto-optimal
+i.e., we do not incur any penalty if we detect the outbreak         solutions is scalarization (c.f., [4]). Here, one picks posi-
+in ﬁnite time, otherwise we incur penalty 1.                        tive weights λ 1 > 0, . . . , λm > 0, and optimizes the objec-
+   (b) Detection time (DT) measures the time passed from            tive R(A) =       i λi Ri (A). Any solution maximizing R(A)
+outbreak till detection by one of the selected nodes. Hence,        is guaranteed to be Pareto-optimal [4], and by varying the
+πi (t) = min{t, Tmax }, where Tmax is the time horizon we           weights λi , diﬀerent Pareto-optimal solutions can be ob-
+consider (end of simulation / data set).                            tained. One might be concerned that, even if optimizing
+   (c) Population aﬀected (PA) by scenario (cascade, out-           the individual objectives Ri is easy (i.e.,  can be approxi-
+break). This criterion has diﬀerent interpretations for both        mated well), optimizing the sum R =            i λi Ri might be
+applications. In the blog setting, the aﬀected population           hard. However, submodularity is closed under nonnegative
+measures the number of blogs involved in a cascade before           linear combinations and thus the new scalarized objective
+the detection. Here, πi (t) is the size of (number of blogs par-    is submodular as well, and we can apply the algorithms we
+ticipating in) cascade i at time t, and πi (∞) is the size of the   develop in the following section.
+cascade at the end of the data set. In the water distribution
+application, the aﬀected population is the expected number          3. PROPOSED ALGORITHM
+of people aﬀected by not (or late) detecting a contamination.
+                                                                      Maximizing submodular functions in general is NP-hard
+   Note, that optimizing each of the objectives can lead to
+                                                                    [11]. A commonly used heuristic in the simpler case, where
+very diﬀerent solutions, hence we may want to simultane-
+                                                                    every node has equal cost (i.e., unit cost, c(s) = 1 for all
+ously optimize all objectives at once. We deal with this
+                                                                    locations s) is the greedy algorithm, which starts with the
+multicriterion optimization problem in Section 2.4.
+                                                                    empty placement A0 = ∅, and iteratively, in step k, adds
+2.3 Properties of the placement objectives                          the location sk which maximizes the marginal gain
+                                                                             sk = argmax R(Ak−1 ∪ {s}) − R(Ak−1 ).          (2)
+  The penalty reduction function2 R(A) has several impor-                         s∈V\Ak−1
+tant and intuitive properties: Firstly, R(∅) = 0, i.e., we          The algorithm stops, once it has selected B elements. Con-
+do not reduce the penalty if we do not place any sensors.           sidering the hardness of the problem, we might expect the
+Secondly, R is nondecreasing, i.e., R(A) ≤ R(B) for all             greedy algorithm to perform arbitrarily badly. However, in
+2
+  The objective R is similar to one of the examples of              the following we show that this is not the case.
+submodular functions described by [17]. Our objective,
+however, preserves additional problem structure (sparsity)          3.1 Bounds for the algorithm
+which we exploit in our implementation, and which we cru-           Unit cost case. Perhaps surprisingly – in the unit cost
+cially depend on to solve large problem instances.                  case – the simple greedy algorithm is near-optimal:
+  Theorem 2 ([17]). If R is a submodular, nondecreas-            is prohibitive in the applications we consider. In addition,
+ing set function and R(∅) = 0, then the greedy algorithm         in our case studies, we show that the solutions of CEF are
+ﬁnds a set AG , such that R(AG ) ≥ (1−1/e) max|A|=B R(A).        provably very close to the optimal score.
+Hence, the greedy algorithm is guaranteed to ﬁnd a solution      3.2 Online bounds for any algorithm
+which achieves at least a constant fraction (1−1/e) (≈ 63%)
+of the optimal score. The penalty reduction R satisﬁes all          The approximation guarantees of (1 − 1/e) and 12 (1 − 1/e)
+requirements of Theorem 2, and hence the greedy algorithm        in the unit- and non-constant cost cases are oﬄine, i.e., we
+approximately solves the maximization problem Eq. (1).           can state them in advance before running the actual algo-
+Non-constant costs. What if the costs of the nodes are           rithm. We can also use submodularity to acquire tight on-
+not constant? It is easy to see that the simple greedy algo-     line bounds on the performance of an arbitrary placement
+rithm, which iteratively adds sensors using rule from Eq. (2)    (not just the one obtained by the CEF algorithm).
+until the budget is exhausted, can fail badly, since it is in-       Theorem 4. For a placement A ⊆ V, and each s ∈ V \ A,     
+diﬀerent to the costs (i.e., a very expensive sensor providing                                  
+                                                                 let δs = R(A ∪ {s}) − R(A). Let rs = δs /c(s), and let
+reward r is preferred over a cheaper sensor providing reward     s1 , . . . , sm be the sequence of locations
+                                                                                                            with   rs in decreas-
+                                                                                                              k−1
+r − ε. To avoid this issue, the greedy rule Eq. (2) can be       ing order. Let k be such that C =                c(si ) ≤ B and
+                                                                 k                                           i=1
+
+                                                                     i=1 c(si ) > B. Let λ = (B − C)/c(sk ). Then
+modiﬁed to take costs into account:
+                          R(Ak−1 ∪ {s}) − R(Ak−1 )
+          sk = argmax                                ,     (3)                                           
+                                                                                                         k−1
+                s∈V\Ak−1              c(s)                                        max R(A) ≤ R(A)    +      δsi + λδsk .      (4)
+                                                                           A,c(A)≤B
+i.e., the greedy algorithm picks the element maximizing the                                             i=1
+beneﬁt/cost ratio. The algorithm stops once no element can          Theorem 4 presents a way of computing how far any given
+be added to the current set A without exceeding the budget.      solution A (obtained using CEF or any other algorithm)
+Unfortunately, this intuitive generalization of the greedy al-   is from the optimal solution. This theorem can be readily
+gorithm can perform arbitrarily worse than the optimal so-       turned into an algorithm, as formalized in Algorithm 2.
+lution. Consider the case where we have two locations, s1           We empirically show that this bound is much tighter than
+and s2 , c(s1 ) = ε and c(s2 ) = B. Also assume we have only     the bound 12 (1 − 1/e), which is roughly 31%.
+one scenario i, and R({s1 }) = 2ε, and R({s2 }) = B. Now,
+R(({s1 })−R(∅))/c(s1 ) = 2, and R(({s2 })−R(∅))/c(s2 ) = 1.      4. SCALING UP THE ALGORITHM
+Hence the greedy algorithm would pick s1 . After selecting
+s1 , we cannot aﬀord s2 anymore, and our total reward would      4.1 Speeding up function evaluations
+be ε. However, the optimal solution would pick s2 , achieving       Evaluating the penalty reductions R can be very expen-
+total penalty reduction of B. As ε goes to 0, the performance    sive. E.g., in the water distribution application, we need
+of the greedy algorithm becomes arbitrarily bad.                 to run physical simulations, in order to estimate the eﬀect
+   However, the greedy algorithm can be improved to achieve      of a contamination at a certain node. In the blog networks,
+a constant factor approximation. This new algorithm, CEF         we need to consider several millions of posts, which make up
+(Cost-Eﬀective Forward selection), computes the solution         the cascades. However, in both applications, most outbreaks
+AGCB using the beneﬁt-cost greedy algorithm, using rule (3),     are sparse, i.e., aﬀect only a small area of the network (c.f.,
+and also computes the solution AGU C using the unit-cost         [12, 16]), and hence are only detected by a small number
+greedy algorithm (ignoring the costs), using rule (2). For       of nodes. Hence, most nodes s do not reduce the penalty
+both rules, CEF only considers elements which do not ex-         incurred by an outbreak (i.e., Ri ({s}) = 0). Note, that
+ceed the budget B. CEF then returns the solution with            this sparsity is only present if we consider penalty reduc-
+higher score. Even though both solutions can be arbitrarily      tions. If for each sensor s ∈ V and scenario i ∈ I we store
+bad, the following result shows that there is at least one of    the actual penalty πi (s), the resulting representation is not
+them which is not too far away from optimum, and hence           sparse. Our implementation exploits this sparsity by repre-
+CEF provides a constant factor approximation.                    senting the penalty function R as an inverted index 4 , which
+    Theorem 3. Let R be the a nondecreasing submodular           allows fast lookup of the penalty reductions by sensor index
+function with R(∅) = 0. Then                                     s. By looking up all scenarios detected by all sensors in our
+                                   1                             placement A, we can quickly compute the penalty reduction
+  max{R(AGCB ), R(AGU C )} ≥ (1 − 1/e) max R(A).                                          
+                                   2         A,c(A)≤B                       R(A) =                 P (i) max Ri ({s}),
+                                                                                                         s∈A
+   Theorem 3 was proved by [11] for the special case of the                         i:i detected by A
+Budgeted MAX-COVER problem3 , and here we prove this             without having to scan the entire data set.
+result for arbitrary nondecreasing submodular functions. The-       The inverted index is the main data structure we use in
+orem 3 states that the better solution of AGBC and AGU C         our optimization algorithms. After the problem (water dis-
+(which is returned by CEF) is at most a constant factor          tribution network simulations, blog cascades) has been com-
+1
+2
+  (1 − 1/e) of the optimal solution.                             pressed into this structure, we use the same implementation
+   Note that the running time of CEF is O(B|V|) in the num-      for optimizing sensor placements and computing bounds.
+ber of possible locations |V| (if we consider a function eval-      In the water distribution network application, exploiting
+uation R(A) as atomic operation, and the lowest cost of a        this sparsity allows us to ﬁt the set of all possible intrusions
+node is constant). In [25], it was shown that even in the non-   considered in the BWSN challenge in main memory (16 GB),
+constant cost case, the approximation guarantee of (1 − 1/e)     which leads to several orders of magnitude improvements in
+can be achieved. However, their algorithm is Ω(B|V|4 ) in the    the running time, since we can avoid hard-drive accesses.
+size of possible locations |V| we need to select from, which     4
+                                                                   The index is inverted, since the data set facilitates the
+3
+ In MAX-COVER, we pick from a collection of sets, such           lookup by scenario index i (since we need to consider cas-
+that the union of the picked sets is as large as possible.       cades, or contamination simulations for each scenario).
+  Function:LazyForward(G = (V, E ),R,c,B,type)                    gorithm5 CELF (Cost-Eﬀective Lazy Forward selection). In
+                                                                  our experiments, CELF achieved up to a factor 700 improve-
+  A ← ∅; foreach s ∈ V do δs ← +∞;
+                                                                  ment in speed compared to CEF when selecting 100 blogs.
+  while ∃s ∈ V \ A : c(A ∪ {s}) ≤ B do
+                                                                  Algorithm 1 provides pseudo-code for CELF.
+    foreach s ∈ V \ A do curs ← false;
+                                                                    When computing the online bounds discussed in Section 3.2,
+    while true do
+                                                                  we can use a similar lazy strategy. The only diﬀerence is
+        if type=UC then s∗ ←         argmax    δs ;
+                                    s∈V\A,c(A∪{s})≤B
+                                                                  that, instead of lazily ensuring that the best δs is correctly
+                               ∗              δs                  computed, we ensure that the top k (where k is as in Eq. (4))
+         if type=CB then s ←           argmax     ;               δs improvements have been updated.
+                            s∈V\A,c(A∪{s})≤B c(s)
+                              ∗
+        if curs then A ← A ∪ s ; break ;
+        else δs ← R(A ∪ {s})−R(A); curs ← true;                   5. CASE STUDY 1: BLOG NETWORK
+  return A;
+                                                                  5.1 Experimental setup
+                                                                     In this work we are not explicitly modeling the spread of
+  Algorithm:CELF(G = (V, E ),R,c,B)                               information over the network, but rather consider cascades
+                                                                  as input to our algorithms.
+  AU C ←LazyForward(G, R, c, B,UC );                                 Here we are interested in blogs that actively participate in
+  ACB ←LazyForward(G, R, c, B,CB );                               discussions, we biased the dataset towards the active part
+  return argmax{R(AU C ), R(ACB )}                                of the blogosphere, and selected a subset from the larger
+         Algorithm 1: The CELF algorithm.                         set of 2.5 million blogs of [7]. We considered all blogs that
+                                                                  received at least 3 in-links in the ﬁrst 6 months of 2006,
+                                                                  and then took all their posts for the full year 2006. So, the
+  Algorithm:GetBound(G = (V, E ),A,R,c,B)                         dataset that we use has 45,000 blogs, 10.5 million posts, and
+  A ← ∅; B ← ∅; R̂ = R(A);                                        16.2 million links (30 GB of data). However, only 1 million
+                                                 δs
+  foreach s ∈ V do δs ← R(A ∪ {s}) − R(A); rs = c(s) ;            links point inside the set of 45,000 blogs.
+                                                                     Posts have rich metadata, including time stamps, which
+  while ∃s ∈ V \ (A ∪ B) : c(A ∪ B ∪ {s}) ≤ B do
+                                                                  allows us to extract information cascades, i.e., subgraphs
+     s∗ ←         argmax          rs ;
+            s∈V\{A∪B},c(A∪B∪{s})≤B                                induced by directed edges representing the temporal ﬂow
+     R̂ ← R̂ + δs∗ ; B ← B ∪ {s∗ };                               of information. We adopt the following deﬁnition of a cas-
+                                                                  cade [16]: every cascade has a single starting post, and other
+   ∗
+  s ←           argmax          rs ; λ ← B−c(A∪B)
+                                           c(s∗ )
+                                                  ;               posts recursively join by linking to posts within the cascade,
+        s∈V\{A∪B},c(A∪B∪{s})≤B
+                                                                  whereby the links obey time order. We detect cascades by
+  return R̂ + λδs∗ ;
+                                                                  ﬁrst identifying starting post and then following in-links.
+ Algorithm 2: Getting bound R̂ on optimal solution.               We discover 346,209 non-trivial cascades having at least 2
+                                                                  nodes. Since the cascade size distribution is heavy-tailed,
+                                                                  we further limit our analysis to only cascades that had at
+                                                                  least 10 nodes. The ﬁnal dataset has 17,589 cascades, where
+4.2 Reducing function evaluations                                 each blog participates in 9.4 diﬀerent cascades on average.
+   Even if we can quickly evaluate the score R(A) of any
+given placement, we still need to perform a large number          5.2 Objective functions
+of these evaluations in order to run the greedy algorithm.           We use the penalty reduction objectives DL, DT and PA
+If we select k sensors among |V| locations, we roughly need       as introduced in Section 2.2. We normalize the scores of
+k|V| function evaluations. We can exploit submodularity           the solution to be between 0 and 1. For the DL (detection
+further to require far fewer function evaluations in prac-        likelihood) criterion, the quality of the solution is the frac-
+tice. Assume we have computed the marginal increments             tion of all detected cascades (regardless of when we detect
+δs (A) = R(A ∪ {s}) − R(A) (or δs (A)/c(s)) for all s ∈ V \ A.    it). The PA (population aﬀected) criterion measures what
+The key idea is to realize that, as our node selection A grows,   fraction of the population included in the cascade after we
+the marginal increments δs (and δs /c(s)) (i.e., the beneﬁts    detect it, i.e., if we would be reading all the blogs initiating
+for adding sensor s ) can never increase: For A ⊆ B ⊆ V,         the cascades, then the quality of the solution is 1. In PA our
+it holds that δs (A) ≥ δs (B). So instead of recomputing          reward depends on which fraction of the cascades we detect,
+δs ≡ δs (A) for every sensor after adding s (and hence re-       and big cascades count more than small cascades.
+quiring |V| − |A| evaluations of R), we perform lazy eval-
+uations: Initially, we mark all δs as invalid. When ﬁnding        5.3 Solution quality
+the next location to place a sensor, we go through the nodes         First, we evaluate the performance of CELF, and estimate
+in decreasing order of their δs . If the δs for the top node      how far from optimal the solution could be. Note, that ob-
+s is invalid, we recompute it, and insert it into the existing    taining the optimal solution would require enumeration of
+order of the δs (e.g., by using a priority queue). In many        245,000 subsets. Since this is impractical, we compare our al-
+cases, the recomputation of δs will lead to a new value which     gorithm to the bounds we developed in Section 3. Fig. 3(a)
+is not much smaller, and hence often, the top element will        shows scores for increasing budgets when optimized the PA
+stay the top element even after recomputation. In this case,      (population aﬀected) criterion. As we select more blogs to
+we found a new sensor to add, without having reevaluated δs       read, the proportion of cascades we catch increases (bottom
+for every location s. The correctness of this lazy procedure      line). We also plot the two bounds. The oﬀ-line bound
+follows directly from submodularity, and leads to far fewer
+(expensive) evaluations of R. We call this lazy greedy al-        5
+                                                                      [22] suggested a similar algorithm for the unit cost case.
+                                     1.4                                                              1                                                                                 0.8                                                                                  300
+
+
+
+
+                                                                                                                                                     Reduction in population affected
+  Reduction in population affected              Offline bound                                                                                                                                      Optimizing
+                                     1.2                                                                        DL                                                                               benefit/cost ratio
+                                                                                                     0.8                                                                                                                                                                     250
+                                                                                                                                   DT                                                   0.6
+
+
+
+
+                                                                                 Penalty reduction
+                                      1                           Online
+
+
+
+
+                                                                                                                                                                                                                                                  Number of blogs
+                                                                  bound                                                                                                                                                                                                      200                                           Score R = 0.4
+                                     0.8                                                             0.6                                                                                                                                                                                                     R = 0.3
+                                                                                                                                                                                        0.4
+                                                                                                                                                                                                                                                                             150
+                                     0.6                                                             0.4                    PA
+                                     0.4                                                                                                                                                                         Ignoring cost                                               100
+                                                           CELF                                                                                                                         0.2                     in optimization
+                                                          solution                                   0.2
+                                     0.2                                                                                                                                                                                                                                                        50              R = 0.2
+                                      0                                                               0                                                                                  0
+                                       0   20     40      60         80    100                         0   20      40      60           80   100                                          0      1         2       3        4                 5                                                        0
+                                                Number of blogs                                                  Number of blogs                                                                     Cost (number of posts)            x 10
+                                                                                                                                                                                                                                           4                                                            0              5000         10000            15000
+                                                                                                                                                                                                                                                                                                                         Number of posts
+
+              (a) Performance of CELF                                                                (b) Objective functions                                                                  (a) Cost of a blog                                                                                              (b) Cost tradeoﬀ
+Figure 3: (a) Performance of CELF algorithm and                                                                                                    Figure 4: (a) Comparison of the unit and the num-
+oﬀ-line and on-line bounds for PA objective func-                                                                                                  ber of posts cost models. (b) For ﬁxed value of PA
+tion. (b) Compares objective functions.                                                                                                            R, we get multiple solutions varying in costs.
+
+                                                                                                                                                                                        0.8
+
+
+
+
+                                                                                                                                                     Reduction in population affected
+
+
+
+
+                                                                                                                                                                                                                                                                    Reduction in population affected
+                                                                                                                                                                                               CELF
+(Section 3.1) shows that the unknown optimal solution lies                                                                                                                                                                                                                                             0.5
+                                                                                                                                                                                                                                                                                                                   CELF
+                                                                                                                                                                                                                      Blog out−links
+between our solution (bottom line) and the bound (top line).                                                                                                                            0.6
+                                                                                                                                                                                                     In−links                                                                                          0.4
+                                                                                                                                                                                                                                                                                                                                 Blog
+                                                                                                                                                                                                                                                                                                                               Out−links
+Notice the discrepancy between the lines is big, which means                                                                                                                            0.4                                                                                                            0.3
+                                                                                                                                                                                                                                                                                                                          All
+                                                                                                                                                                                                                                                                                                                       Out−links
+the bound is very loose. On the other hand, the middle line                                                                                                                                            All outlinks
+                                                                                                                                                                                                                                                                                                       0.2
+shows the online bound (Section 3.2), which again tells us                                                                                                                              0.2                                # Posts
+                                                                                                                                                                                                                                                                                                                                               In−Links
+                                                                                                                                                                                                                                                                                                       0.1
+that the optimal solution is somewhere between our current                                                                                                                                                                        Random                                                                                             # Posts
+                                                                                                                                                                                         0                                                                                                              0
+solution and the bound. Notice, the gap is much smaller.                                                                                                                                  0     20        40      60
+                                                                                                                                                                                                        Number of blogs
+                                                                                                                                                                                                                                  80       100                                                           0        1000     2000   3000
+                                                                                                                                                                                                                                                                                                                          Number of posts
+                                                                                                                                                                                                                                                                                                                                            4000      5000
+
+This means (a) that the our on-line bound is much tighter
+than the traditional oﬀ-line bound. And, (b) that our CELF                                                                                                                                      (a) Unit cost                                                                  (b) Number of posts cost
+algorithm performs very close to the optimum.                                                                                                      Figure 5: Heuristic blog selection methods. (a) unit
+   In contrast to the oﬀ-line bound, the on-line bound is al-                                                                                      cost model, (b) number of posts cost model.
+gorithm independent, and thus can be computed regardless
+of the algorithm used to obtain the solution. Since it is
+tighter, it gives a much better worst case estimate of the                                                                                         selected blogs can have at most B posts total. Note, that
+solution quality. For this particular experiment, we see that                                                                                      under the unit cost model, CELF chooses expensive blogs
+CELF works very well: after selecting 100 blogs, we are at                                                                                         with many posts. For example, to obtain the same PA ob-
+most 13.8% away from the optimal solution.                                                                                                         jective value, one needs to read 10,710 posts under unit cost
+   Figure 3(b) shows the performance using various objective                                                                                       model. The NP cost model achieves the same score while
+functions (from top to bottom: DL, DT, PA). DL increases                                                                                           reading just 1,500 posts. Thus, optimizing the beneﬁt cost
+the fastest, which means that one only needs to read a few                                                                                         ratio (PA/cost) leads to drastically improved performance.
+blogs to detect most of the cascades, or equivalently that                                                                                            Interestingly, the solutions obtained under the NP cost
+most cascades hit one of the big blogs. However, the pop-                                                                                          model are very diﬀerent from the unit cost model. Under
+ulation aﬀected (PA) increases much slower, which means                                                                                            NP, political blogs are not chosen anymore, but rather sum-
+that one needs many more blogs to know about stories be-                                                                                           marizers (e.g., themodulator.org, watcherofweasels.com,
+fore the rest of population does. By using the on-line bound                                                                                       anglican.tk) are important. Blogs selected under NP cost
+we also calculated that all objective functions are at most                                                                                        appear about 3 days later in the cascade as those selected
+5% to 15% from optimal.                                                                                                                            under unit cost, which further suggests that that summa-
+                                                                                                                                                   rizer blogs tend to be chosen under NP model.
+5.4 Cost of a blog                                                                                                                                    In practice, the cost of reading a blog is not simply propor-
+   The results presented so far assume that every blog has                                                                                         tional to the number of posts, since we also need to navigate
+the same cost. Under this unit cost model, the algorithm                                                                                           to the blog (which takes constant eﬀort per blog). Hence, a
+tends to pick large, inﬂuential blogs, that have many posts.                                                                                       combination of unit and NP cost is more realistic. Fig. 4(b)
+For example, instapundit.com is the best blog when opti-                                                                                           interpolates between these two cost models. Each curve
+mizing PA, but it has 4,593 posts. Interestingly, most of the                                                                                      shows the solutions with the same value R of the PA ob-
+blogs among the top 10 are politics blogs: instapundit.                                                                                            jective, but using a diﬀerent number of posts (x-axis) and
+com, michellemalkin.com, blogometer.nationaljournal.                                                                                               blogs (y-axis) each. For a given R, the ideal spot is the one
+com, and sciencepolitics.blogspot.com. Some popular                                                                                                closest to origin, which means that we want to read the least
+aggregators of interesting things and trends on the blogo-                                                                                         number of posts from least blogs to obtain desired score R.
+sphere are also selected: boingboing.net, themodulator.                                                                                            Only at the end points does CELF tend to pick extreme so-
+org and bloggersblog.com. The top 10 PA blogs had more                                                                                             lutions: few blogs with many posts, or many blogs with few
+than 21,000 thousand posts in 2006. They account for 0.2%                                                                                          posts. Note, there is a clear knee on plots of Fig. 4(b), which
+of all posts, 3.5% of all in-links, 1.7% of out-links inside the                                                                                   means that by only slightly increasing the number of blogs
+dataset, and 0.37% of all out-links.                                                                                                               we allow ourselves to read, the number of posts needed de-
+   Under the unit cost model, large blogs are important, but                                                                                       creases drastically, while still maintaining the same value R
+reading a blog with many posts is time consuming. This                                                                                             of the objective function.
+motivates the number of posts (NP) cost model, where we
+set the cost of a blog to the number of posts it had in 2006.                                                                                      5.5 Comparison to heuristic blog selection
+   First, we compare the NP cost model with the unit cost in                                                                                          Next, we compare our method with several intuitive heuris-
+Fig. 4(a). The top curve shows the value of the PA criterion                                                                                       tic selection techniques. For example, instead of optimizing
+for budgets of B posts, i.e., we optimize PA such that the                                                                                         the DT, DL or PA objective function using CELF, we may
+                                     0.4                                                                       400                                                                                0.2                                                                                 0.2
+  Reduction in population affected
+
+
+
+
+                                                                                                                                                              Reduction in population affected
+
+
+
+
+                                                                                                                                                                                                                                                  Reduction in population affected
+                                                                                                                              Exhaustive search                                                         Optimizing on future,
+
+
+
+
+                                                                                      Running time (seconds)
+                                           Split                                                                                                                                                          Result on future
+                                     0.3                                                                       300              (All subsets)                                                    0.15                                                                                0.15
+                                                                                                                                                                                                                                                                                                  Optimizing on future,
+                                                                                                                                 Naive                                                                                                                                                              Result on future
+                                     0.2                                                                       200               greedy                                                           0.1                  Optimizing on historic,                                        0.1
+                                                                                                                                                                                                                         Result on future
+                                                                 No split
+                                                                                                               100                           CELF,
+                                     0.1                                                                                                                                                         0.05                                                                                0.05
+                                                                                                                                          CELF + Bounds
+                                                                                                                                                                                                                                                                                                        Optimizing on historic,
+                                                                                                                 0                                                                                                                                                                                        Result on future
+                                      0                                                                                                                                                            0                                                                                   0
+                                       0    200         400    600       800   1000                                  2      4         6         8     10                                            0   200      400          600   800    1000                                         0   200       400          600    800     1000
+                                                   Cost (number of posts)                                                Number of blogs selected                                                                      Cost                                                                                 Cost
+
+
+     (a) Split vs. no split         (b) Run time                                                                                                                   (a) All blogs             (b) Only big blogs
+Figure 6: (a) Improvement in performance by split-                                                                                                         Figure 7: Generalization to future data when CELF
+ting big blogs into multiple nodes. (b) Run times of                                                                                                       can select any blog (a), or only big blogs (b).
+exhaustive search, greedy and CELF algorithm.
+                                                                                                                                                           found that Friday is the best day to read blogs. The value of
+just want to select the most popular blogs and hope to de-                                                                                                 PA for Friday is 0.20, while it is 0.13 for the rest of the week.
+tect many cascades. We considered several such heuristics,                                                                                                 We consider this surprising, since the activity of the blogo-
+where we order blogs by some “goodness” criteria, and then                                                                                                 sphere (number of posts and links created) drops towards
+pick top blogs (until the budget is exhausted). We consider                                                                                                the end of the week, and especially over the weekend [16].
+the following criteria: the number posts on the blog, the
+cumulative number of out-links of blog’s posts, the number
+of in-links the blog received from other blogs in the dataset,
+                                                                                                                                                           5.7 Generalization to future data
+and the number of out-links to other blogs in the dataset.                                                                                                    Since the inﬂuence and popularity of the blogs also evolves
+   As Fig. 5(a) shows, the CELF algorithm greatly outper-                                                                                                  over time we also want to know how well the selected blogs
+forms all the heuristic selection techniques. More interest-                                                                                               will detect cascades in the future. To evaluate the general-
+ingly, the best heuristics (doing 45% worse than CELF) pick                                                                                                ization to unknown future, we use the ﬁrst 6 months of the
+blogs by the number of in- or out-links from/to other blogs                                                                                                dataset as historic data to select a set of blogs, and then use
+in the dataset. Number of posts, the total number of out-                                                                                                  second 6 months of the dataset to evaluate the performance
+links and random blog selection do not perform well.                                                                                                       of selected blogs on unseen future cascades.
+   Number of in-links is the indicator of a blog’s tendency to                                                                                                Fig. 7 compares the performance on the unknown future
+create cascades, while number of out-links (to other blogs)                                                                                                data. Top dashed curve in both plots shows the optimal per-
+indicates blog’s tendency to summarize the blogosphere. We                                                                                                 formance on future data, i.e., we select the blogs directly us-
+also note, that the surprisingly good performance of the                                                                                                   ing the (unknown) future data. The bottom curve presents
+number of out-links to blogs in the dataset is an artefact                                                                                                 the realistic case where we select the blogs using historic
+of our “closed-world” dataset, and in real-life we can not                                                                                                 data and evaluate using hidden future data.
+estimate this. The results also agree well with our intuition                                                                                                 As Fig. 7(a) shows, CELF overﬁts when evaluated on the
+that the number of in-links is a good heuristic, since it di-                                                                                              future data, i.e., it selects small blogs with very few posts
+rectly indicates the of propagation of information.                                                                                                        that just by chance participate in cascades, and then these
+   Fig. 5(b) explores the same setting under the NP cost                                                                                                   blogs do not generalize well for the second half of the year.
+model. Here, given a budget of B posts, we select a set of                                                                                                 One way to overcome this overﬁtting is to prevent CELF from
+blogs to optimize PA objective. For the heuristics, we select                                                                                              picking very small blogs. To understand this restriction we
+a set of blogs to optimize chosen heuristic, e.g., the total                                                                                               show in Fig. 7(b) the performance when CELF can only select
+number of in-links of selected blogs while still ﬁtting inside                                                                                             blogs with at least one post per day (365 posts per year).
+the budget of B posts. Again, CELF outperforms the next                                                                                                       Comparing Fig. 7(a) and Fig. 7(b) we see that the opti-
+best heuristics by 41%, and again the number of in- and                                                                                                    mal performance (top curve) drops if CELF is limited on only
+out-links are the best heuristics.                                                                                                                         picking big blogs. This is expected since CELF has less choice
+   These results show that simple heuristics that one could                                                                                                of which blogs to pick, and thus performs worse. However,
+use to identify blogs to read do not really work well. There                                                                                               when limiting the selection to only big blogs (Fig. 7(b)) the
+are good summarizer blogs that may not be very popular,                                                                                                    gap between the curves is very small (compared to the big
+but which, by using few posts, catch most of the important                                                                                                 gap of Fig. 7(a)). Moreover, the performance on the future
+stories propagating over the blogosphere.                                                                                                                  data does not drop, and the method generalizes well.
+
+5.6 Fractionally selecting blogs                                                                                                                           5.8 Scalability
+  Our framework also allows fractional selection of blogs,                                                                                                    Figure 4(b) plots the running time of selecting k blogs. We
+which means that instead of reading a large blog every day,                                                                                                see that exhaustively enumerating all possible subsets of k
+we can read it, e.g., only one day per week. This also allows                                                                                              elements is infeasible (the line jumps out of the plot for k =
+us to ask: what is the best day of the week to read blogs?                                                                                                 3). The simple greedy algorithm scales as Ω(k|V|), since for
+  In order to study whether fractional selection allows to                                                                                                 every increment of k we need to consider selecting all remain-
+achieve better beneﬁt cost ratio, we split the blogs which                                                                                                 ing |V| − k blogs. The bottom line overlapping the x-axis
+had at least one post per day into 7 blogs, one for each day                                                                                               of Fig. 4(b) shows the performance of our CELF algorithm.
+of the week. Fig. 6(a) shows, that by splitting big blogs,                                                                                                 For example, for selecting 100 blogs, greedy algorithm runs
+the population aﬀected (PA) objective function increases for                                                                                               4.5h, while CELF takes 23 seconds (700 times faster). Calcu-
+12% over the setting where only whole blogs can be selected.                                                                                               lation of the on-line bounds while running CELF takes 54s.
+  Returning to the original question, we performed the fol-                                                                                                   Exploiting the sparsity of the problem (c.f., Section 4) al-
+lowing experiment: given a budget of 1000 posts, what is                                                                                                   lowed us to reduce the size of the inverted index from orig-
+the best day of the week to read posts (optimizing PA)? We                                                                                                 inally 3.5 GB to 50 MB, easily ﬁtting it in main memory.
+6.   CASE STUDY 2: WATER NETWORKS                                                                     1.4                                                                  1
+
+
+
+
+                                                                   Reduction of population affected
+                                                                                                      1.2   offline bound
+                                                                                                                                                                          0.8
+                                                                                                                                  online bound
+6.1 Experimental setup                                                                                                                                                                          PA
+
+
+
+
+                                                                                                                                                      Penalty reduction
+                                                                                                       1
+                                                                                                                                                                          0.6           DL
+                                                                                                      0.8
+   In the water distribution system application, we used the                                          0.6                                                                 0.4
+data and rules introduced by the Battle of Water Sensor                                               0.4
+                                                                                                                             CELF
+                                                                                                                            solution
+Networks (BWSN) challenge [19]. We considered both the                                                0.2
+                                                                                                                                                                          0.2                 DT
+
+small network on 129 nodes (BWSN1), and a large, real-                                                 0
+                                                                                                        0     5         10         15            20
+                                                                                                                                                                           0
+                                                                                                                                                                            0   10     20       30        40   50
+istic, 12,527 node distribution network (BWSN2) provided                                                     Number of sensors selected                                          Number of sensors selected
+
+as part of the BWSN challenge. In addition we also con-                                               (a) Performance of CELF                                              (b) Objective functions
+sider a third water distribution network (NW3) of a large        Figure 8: (a) CELF with oﬄine and online bounds
+metropolitan area in the United States. The network (not         for PA objective. (b) Diﬀerent objective functions.
+including the household level) contains 21,000 nodes and
+25,000 pipes (edges). To our knowledge, this is the largest
+water distribution network considered for sensor placement
+optimization so far. The networks consist of a static descrip-
+tion (junctions and pipes) and dynamic parameters (time-
+varying water consumption demand patterns at diﬀerent
+nodes, opening and closing of valves, pumps, tanks, etc.)
+
+6.2 Objective functions
+  In the BWSN challenge, we want to select a set of 20 sen-
+                                                                                                                   (a) PA                                                               (b) DL
+sors, simultaneously optimizing the objective functions DT,
+PA and DL, as introduced in Section 2.2. To obtain cas-          Figure 9: Water network sensor placements: (a)
+cades we use a realistic disease model deﬁned by [19], which     when optimizing PA, sensors are concentrated in
+depends on the demands and the contaminant concentration         high population areas. (b) when optimizing DL, sen-
+at each node. In order to evaluate these objectives, we use      sors are uniformly spread out.
+the EPANET simulator [24], which is based on a physical
+model to provide realistic predictions on the detection time     timizing the detection likelihood, the sensors are uniformly
+and concentration of contaminant for any possible contam-        spread out over the network. Intuitively this makes sense,
+ination event. We consider simulations of 48 hours length,       since according to BWSN challenge [19], outbreaks happen
+with 5 minute simulation timesteps. Contaminations can           with same probability at every node. So, for DL, the placed
+happen at any node and any time within the ﬁrst 24 hours,        sensors should be as close to all nodes as possible.
+and spread through the network according to the EPANET              We also compared the scores achieved by CELF with sev-
+simulation. The time of the outbreak is important, since wa-     eral heuristic sensor placement techniques, where we order
+ter consumption varies over the day and the contamination        the nodes by some “goodness” criteria, and then pick the top
+spreads at diﬀerent rates depending on the time of the day.      nodes. We consider the following criteria: population at the
+Altogether, we consider a set of 3.6 million possible con-       node, water ﬂow through the node, and the diameter and the
+tamination scenarios and each of these is associated with a      number of pipes at the node. Fig. 11(a) shows the results for
+“cascade” of contaminant spreading over the network.             the PA objective function. CELF outperforms best heuristic
+                                                                 by 45%. Best heuristics are placing nodes at random, by de-
+6.3 Solution quality                                             gree or their population. We see heuristics perform poorly,
+   We ﬁrst used CELF to optimize placements of increasing        since nodes which are close in the graph tend to have similar
+size, according to the three criteria DL, DT, PA. We again       ﬂow, diameter and population, and hence the sensors will be
+normalized the scores to be between 0 and 1, where 1 is the      spread out too little. Even the maximum over one hundred
+best achievable score when placing sensors at every node.        random trials performs far worse than CELF [15].
+   Fig. 8 (a) presents the CELF score, the oﬀ-line and on-line
+bounds for PA objective on the BWSN2 network. Consis-            6.4 Multicriterion optimization
+tently with the blog experiments, the on-line bound is much         Using the theory developed in Section 2.4, we traded-oﬀ
+tighter than the oﬀ-line bound, and the solutions obtained       diﬀerent objectives for the water distribution application.
+by our CELF algorithm are very close to the optimum.             We selected pairs of objectives, e.g., DL and PA, and varied
+   Fig. 8 (b) shows CELF’s performance on all 3 objective        the weights λ to produce (approximately) Pareto-optimal
+functions. Similarly to the blog data, the population af-        solutions. In Fig. 10 (a) we plot the tradeoﬀ curves for
+fected (PA) score increases very quickly. The reason is that     diﬀerent placement sizes k. By adding more sensors, both
+most contamination events only impact a small fraction of        objectives DL and PA increase. The crves also show, that
+the network. Using few sensors, it is relatively easy to de-     if we, e.g., optimize for DL, the PA score can be very low.
+tect most of the high impact outbreaks. However, if we want      However, there are points which achieve near-optimal scores
+to detect all scenarios, we need to place a large number of      in both criteria (the knee in the curve). This sweet spot is
+sensors (2,263 in our experiment). Hence, the DL (and cor-       what we aim for in multi-criteria optimization.
+respondingly DT) increase more slowly than PA.                      We also traded oﬀ the aﬀected population PA and a fourth
+   Fig. 9 shows two 20 sensor placements after optimizing DL     criterion deﬁned by BWSN, the expected consumption of
+and PA respectively on BWSN2. When optimizing the pop-           contaminated water. Fig. 10 (b) shows the trade-oﬀ curve for
+ulation aﬀected (PA), the placed sensors are concentrated in     this experiment. Notice that the curves (almost) collapse to
+the dense high-population areas, since the goal is to detect     points, indicating that these criteria are highly correlated,
+outbreaks which aﬀect the population the most. When op-          which we expect for this pair of objective functions. Again,
+                                             1
+                                                                            k=50
+                                                                                                                                        1                                                        bution. Kempe et al. showed that the problem of selecting
+
+
+
+
+                                                                                                      Contaminated water consumed
+                                                                                                                                                                        k=20
+                                            0.9                      k=35
+                                                                                                                                                                                                 a set of nodes with maximum inﬂuence is submodular, sat-
+  Population affected (PA)
+
+                                                                                                                                    0.9                                               k=50
+                                                                 k=20                                                                                                          k=35
+                                            0.8
+                                                         k=10
+                                                                                                                                                                            k=10
+                                                                                                                                                                                                 isfying the conditions of Theorem 2, and hence the greedy
+                                                                                                                                                                                                 algorithm provides a (1 − 1/e) approximation. The problem
+                                            0.7                                                                                     0.8
+                                                         k=5
+                                                                                                                                                                  k=5
+                                            0.6     k=3
+                                                                                                                                    0.7                                                          addressed in this paper generalizes this Triggering model:
+                                            0.5
+                                                   k=2                                                                                                      k=3
+                                                                                                                                    0.6
+                                            0.4                                                                                                       k=2                                           Theorem 5. The Triggering Model [10] is a special case
+                                             0.1         0.2       0.3        0.4     0.5
+                                                                                                                                    0.5
+                                                                                                                                                0.4         0.6            0.8               1   of our network outbreak detection problem.
+                                                            Detection likelihood (DL)                                                                 Population affected (PA)
+
+                                                                     (a)                                                                                          (b)                            In order to prove Theorem 5, we consider ﬁxed directed
+Figure 10: (a) Trading oﬀ PA and DL. (b) Trading                                                                                                                                                 graphs sampled from the Triggering distribution. If we re-
+oﬀ PA and consumed contaminated water.                                                                                                                                                           vert the arcs in any such graph, then our PA objective cor-
+                                                                                                                                                                                                 responds exactly to the inﬂuence function of [10] applied to
+                                            0.8                                                                Running time (minutes)                                                            the original graph. Details of the proof can be found in [15].
+         Reduction in population affected
+
+
+
+
+                                                     CELF                                                                               300
+                                                                                                                                                       Exhaustive search
+                                                                                                                                                                                                    Theorem 5 shows that spreading inﬂuence under the gen-
+                                                                                   Random
+                                            0.6                      Degree                                                                              (All subsets)                           eral Triggering Model is a special case of our outbreak de-
+                                                                                                                                        200                       Naive                          tection formalism. The problems are fundamentally related
+                                            0.4                                                                                                                   greedy
+
+                                                                                      Diameter                                                                                CELF,              since, when spreading inﬂuence, one tries to aﬀect as many
+                                                                               Flow                                                     100                                CELF + Bounds
+                                            0.2
+                                                                Population                                                                                                                       nodes as possible, while when detecting outbreak, one wants
+                                                                                                                                            0
+                                                                                                                                                                                                 to minimize the eﬀect of an outbreak in the network. Sec-
+                                              0
+                                               0            5          10          15            20                                                2    4      6      8     10                   ondly, note that in the example of reading blogs, it is not
+                                                                 Number of sensors                                                               Number of sensors selected
+                                                                                                                                                                                                 necessarily a good strategy to aﬀect nodes which are very in-
+ (a) Comparison with random                                                                                                                           (b) Runtime                                ﬂuential, as these tend to have many posts, and hence are ex-
+Figure 11: (a) Solutions of CELF outperform heuris-                                                                                                                                              pensive to read. In contrast to inﬂuence maximization, the
+tic approaches. (b) Running time of exhaustive                                                                                                                                                   notion of cost-beneﬁt analysis is crucial to our applications.
+search, greedy and CELF.
+                                                                                                                                                                                                 7.2 Related work
+the eﬃciency of our implementation allows to quickly gen-                                                                                                                                        Optimizing submodular functions. The fundamental
+erate and explore these trade-oﬀ curves, while maintaining                                                                                                                                       result about the greedy algorithm for maximizing submod-
+strong guarantees about near-optimality of the results.                                                                                                                                          ular functions in the unit-cost case goes back to [17]. The
+                                                                                                                                                                                                 ﬁrst approximation results about maximizing submodular
+6.5 Scalability                                                                                                                                                                                  functions in the non-constant cost case were proved by [25].
+   In the water distribution setting, we need to simulate 3.6                                                                                                                                    They developed an algorithm with approximation guarantee
+million contamination scenarios, each of which takes approx-                                                                                                                                     of (1 − 1/e), which however requires a number of function
+imately 7 seconds and produces 14KB of data. Since most of                                                                                                                                       evaluations Ω(B|V|4 ) in the size of the ground set V (if the
+the computer cluster scheduling systems break if one would                                                                                                                                       lowest cost is constant). In contrast, the number of evalu-
+submit 3.6 million jobs into the queue, we developed a dis-                                                                                                                                      ations required by CELF is O(B|V|), while still providing a
+tributed architecture, where the clients obtain simulation                                                                                                                                       constant factor approximation guarantee.
+parameters and then conﬁrm the successful completion of                                                                                                                                          Virus propagation and outbreak detection. Work on
+the simulation. We run the simulation for a month on a                                                                                                                                           spread of diseases in networks and immunization mostly fo-
+cluster of around 40 machines. This produced 152GB of                                                                                                                                            cuses on determining the value of the epidemic threshold [1],
+outbreak simulation data. By exploiting the properties of                                                                                                                                        a critical value of the virus transmission probability above
+the problem described in Section 4, the size of the inverted                                                                                                                                     which the virus creates an epidemic. Several strategies for
+index (which represents the relevant information for evalu-                                                                                                                                      immunization have also been proposed: uniform node immu-
+ating placement scores) is reduced to 16 GB which we were                                                                                                                                        nization, targeted immunization of high degree nodes [20]
+able to ﬁt into main memory of a server. The fact that                                                                                                                                           and acquaintance immunization, which focuses on highly
+we could ﬁt the data into main memory alone sped up the                                                                                                                                          connected nodes [5].In the context of our work, uniform im-
+algorithms by at least a factor of 1000.                                                                                                                                                         munization corresponds to randomly placing sensors in the
+   Fig. 11 (b) presents the running times of CELF, the naive                                                                                                                                     network. Similarly, targeted immunization corresponds to
+greedy algorithm and exhaustive search (extrapolated). We                                                                                                                                        selecting nodes based on their in- or out-degree. As we have
+can see that the CELF is 10 times faster than the greedy al-                                                                                                                                     seen in Figures 5 and 11, both strategies perform worse than
+gorithm when placing 10 sensors. Again, a drastic speedup.                                                                                                                                       direct optimization of the population aﬀected criterion.
+                                                                                                                                                                                                 Information cascades and blog networks. Cascades
+                                                                                                                                                                                                 have been studied for many years by sociologists concerned
+7.                                                DISCUSSION AND RELATED WORK                                                                                                                    with the diﬀusion of innovation [23]; more recently, cas-
+                                                                                                                                                                                                 cades we used for studying viral marketing [8, 14], selecting
+7.1 Relationship to Influence Maximization                                                                                                                                                       trendsetters in social networks [21], and explaining trends
+  In [10], a Triggering Model was introduced for modeling                                                                                                                                        in blogspace [9, 13]. Studies of blogspace either spend eﬀort
+the spread of inﬂuence in a social network. As the authors                                                                                                                                       mining topics from posts [9] or consider only the properties
+show, this model generalizes the Independent Cascade, Lin-                                                                                                                                       of blogspace as a graph of unlabeled URLs [13]. Recently,
+ear Threshold and Listen-once models commonly used for                                                                                                                                           [16] studied the properties and models of information cas-
+modeling the spread of inﬂuence. Essentially, this model de-                                                                                                                                     cades in blogs. While previous work either focused on em-
+scribes a probability distribution over directed graphs, and                                                                                                                                     pirical analyses of information propagation and/or provided
+the inﬂuence is deﬁned as the expected number of nodes                                                                                                                                           models for it, we develop a general methodology for node
+reachable from a set of nodes, with respect to this distri-                                                                                                                                      selection in networks while optimizing a given criterion.
+Water distribution network monitoring. A number of                 9. REFERENCES
+approaches have been proposed for optimizing water sensor
+networks (c.f., [2] for an overview of the literature). Most of     [1] N. Bailey. The Mathematical Theory of Infectious
+                                                                        Diseases and its Applications. Griﬃn, London, 1975.
+these approaches are only applicable to small networks up
+                                                                    [2] J. Berry, W. E. Hart, C. E. Phillips, J. G. Uber, and
+to approximately 500 nodes. Many approaches are based on                J. Watson. Sensor placement in municipal water
+heuristics (such as genetic algorithms [18], cross-entropy se-          networks with temporal integer programming models.
+lection [6], etc.) that cannot provide provable performance             J. Water Resources Planning and Management, 2006.
+guarantees about the solutions. Closest to ours is an ap-           [3] S. Bikhchandani, D. Hirshleifer, and I. Welch. A
+proach by [2], who equate the placement problem with a p-               theory of fads, fashion, custom, and cultural change as
+median problem, and make use of a large toolset of existing             informational cascades. J. of Polit. Econ., (5), 1992.
+algorithms for this problem. The problem instances solved           [4] S. Boyd and L. Vandenberghe. Convex Optimization.
+by [2] are a factor 72 smaller than the instances considered            Cambridge UP, March 2004.
+in this paper. In order to obtain bounds for the quality of         [5] R. Cohen, S. Havlin, and D. ben Avraham. Eﬃcient
+                                                                        immunization strategies for computer networks and
+the generated placements, the approach in [2] needs to solve            populations. Physical Review Letters, 91:247901, 2003.
+a complex (NP-hard) mixed-integer program. Our approach             [6] G. Dorini, P. Jonkergouw, and et.al. An eﬃcient
+is the ﬁrst algorithm for the water network placement prob-             algorithm for sensor placement in water distribution
+lem, which is guaranteed to provide solutions that achieve at           systems. In Wat. Dist. Syst. An. Conf., 2006.
+least a constant fraction of the optimal solution within poly-      [7] N. S. Glance, M. Hurst, K. Nigam, M. Siegler,
+nomial time. Additionally, it handles orders of magnitude               R. Stockton, and T. Tomokiyo. Deriving marketing
+larger problems than previously considered.                             intelligence from online discussion. In KDD, 2005.
+                                                                    [8] J. Goldenberg, B. Libai, and E. Muller. Talk of the
+                                                                        network: A complex systems look at the underlying
+8.   CONCLUSIONS                                                        process of word-of-mouth. Marketing Letters, 12, 2001.
+                                                                    [9] D. Gruhl, R. Guha, D. Liben-Nowell, and A. Tomkins.
+   In this paper, we presented a novel methodology for select-          Information diﬀusion through blogspace. WWW ’04.
+ing nodes to detect outbreaks of dynamic processes spread-         [10] D. Kempe, J. Kleinberg, and E. Tardos. Maximizing
+ing over a graph. We showed that many important objec-                  the spread of inﬂuence through a social network. In
+tive functions, such as detection time, likelihood and aﬀected          KDD, 2003.
+population are submodular. We then developed the CELF al-          [11] S. Khuller, A. Moss, and J. Naor. The budgeted
+gorithm, which exploits submodularity to ﬁnd near-optimal               maximum coverage problem. Inf. Proc. Let., 1999.
+node selections – the obtained solutions are guaranteed to         [12] A. Krause, J. Leskovec, C. Guestrin, J. VanBriesen,
+achieve at least a fraction of 12 (1 − 1/e) of the optimal solu-        and C. Faloutsos. Eﬃcient sensor placement
+                                                                        optimization for securing large water distribution
+tion, even in the more complex case where every node can                networks. Submitted to the J. of Water Resources
+have an arbitrary cost. Our CELF algorithm is up to 700                 Planning an Management, 2007.
+times faster than standard greedy algorithm. We also de-           [13] R. Kumar, J. Novak, P. Raghavan, and A. Tomkins.
+veloped novel online bounds on the quality of the solution              On the bursty evolution of blogspace. In WWW, 2003.
+obtained by any algorithm. We used these bounds to prove           [14] J. Leskovec, L. A. Adamic, and B. A. Huberman. The
+that the solutions we obtained in our experiments achieve               dynamics of viral marketing. In ACM EC, 2006.
+90% of the optimal score (which is intractable to compute).        [15] J. Leskovec, A. Krause, C. Guestrin, C. Faloutsos,
+   We extensively evaluated our methodology on two large                J. VanBriesen, and N. Glance. Cost-eﬀective Outbreak
+                                                                        Detection in Networks. TR, CMU-ML-07-111, 2007.
+real-world problems: (a) detection of contaminations in the        [16] J. Leskovec, M. McGlohon, C. Faloutsos, N. S.
+largest water distribution network considered so far, and (b)           Glance, and M. Hurst. Cascading behavior in large
+selection of informative blogs in a network of more than 10             blog graphs. In SDM, 2007.
+million posts. We showed that the proposed CELF algorithm          [17] G. Nemhauser, L. Wolsey, and M. Fisher. An analysis
+greatly outperforms intuitive heuristics. We also demon-                of the approximations for maximizing submodular set
+strated that our methodology can be used to study complex               functions. Mathematical Programming, 14, 1978.
+application-speciﬁc questions such as multicriteria tradeoﬀ,       [18] A. Ostfeld and E. Salomons. Optimal layout of early
+cost-sensitivity analyses and generalization behavior. In ad-           warning detection stations for water distribution
+                                                                        systems security. J. Water Resources Planning and
+dition to demonstrating the eﬀectiveness of our method, we              Management, 130(5):377–385, 2004.
+obtained some counterintuitive results about the problem           [19] A. Ostfeld, J. G. Uber, and E. Salomons. Battle of
+domains, such as the fact that the popular blogs might not              water sensor networks: A design challenge for
+be the most eﬀective way to catch information.                          engineers and algorithms. In WDSA, 2006.
+   We are convinced that the methodology introduced in this        [20] R. Pastor-Satorras and A. Vespignani. Immunization
+paper can apply to many other applications, such as com-                of complex networks. Physical Review E, 65, 2002.
+puter network security, immunization and viral marketing.          [21] M. Richardson and P. Domingos. Mining
+                                                                        knowledge-sharing sites for viral marketing. KDD ’02.
+  Acknowledgements. This material is based upon work               [22] T. G. Robertazzi and S. C. Schwartz. An accelerated
+supported by the National Science Foundation under Grants               sequential algorithm for producing D-optimal designs.
+No. CNS-0509383, SENSOR-0329549, IIS-0534205. This                      SIAM J. Sci. Stat. Comp., 10(2):341–358, 1989.
+work is also supported in part by the Pennsylvania Infras-         [23] E. Rogers. Diﬀusion of innovations. Free Press, 1995.
+tructure Technology Alliance (PITA), with additional fund-         [24] L. A. Rossman. The epanet programmer’s toolkit for
+ing from Intel, NTT, and by a generous gift from Hewlett-               analysis of water distribution systems. In
+Packard. Jure Leskovec and Andreas Krause were supported                Ann. Wat. Res. Plan. Mgmt. Conference, 1999.
+in part by Microsoft Research Graduate Fellowship. Carlos          [25] M. Sviridenko. A note on maximizing a submodular
+                                                                        set function subject to knapsack constraint.
+Guestrin was supported in part by an IBM Faculty Fellow-                Operations Research Letters, 32:41–43, 2004.
+ship, and an Alfred P. Sloan Fellowship.
+
