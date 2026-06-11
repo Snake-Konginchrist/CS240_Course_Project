@@ -1,4 +1,4 @@
-\documentclass[10pt]{beamer}
+\documentclass[10pt, aspectratio=169]{beamer}
 
 \usetheme{Madrid}
 \usecolortheme{default}
@@ -9,7 +9,27 @@
 \usepackage{graphicx}
 \usepackage{hyperref}
 
+\definecolor{deepteal}{HTML}{0F766E}
+\definecolor{ink}{HTML}{111827}
+\definecolor{softslate}{HTML}{F1F5F9}
+\definecolor{amber}{HTML}{D97706}
+\definecolor{blue}{HTML}{2563EB}
+
+\setbeamercolor{title}{fg=ink}
+\setbeamercolor{frametitle}{fg=white,bg=deepteal}
+\setbeamercolor{structure}{fg=deepteal}
+\setbeamercolor{block title}{fg=white,bg=deepteal}
+\setbeamercolor{block body}{fg=ink,bg=softslate}
+\setbeamercolor{alerted text}{fg=amber}
+
+\newcommand{\metricbox}[2]{%
+    \begin{block}{#1}
+        \centering\Large #2
+    \end{block}
+}
+
 \title[Distributed Influence Maximization]{Submodular Optimization and Greedy Approximation for Distributed Influence Maximization}
+\subtitle{A course-scale reproduction with communication-constrained candidate sharing}
 \author{Yixin Chen \and Bichi Zhang \and Yaoqin Ye}
 \institute{CS240: Algorithm Design and Analysis}
 \date{Spring 2026}
@@ -20,18 +40,44 @@
     \titlepage
 \end{frame}
 
-\begin{frame}{Project Goal}
-    \begin{itemize}
-        \item Topic 3: Influence Maximization.
-        \item Choose $k$ seed nodes in a network to maximize expected diffusion spread.
-        \item Connect a modern network data problem to classical algorithms:
-        \begin{itemize}
-            \item monotone submodular maximization;
-            \item greedy approximation;
-            \item CELF lazy evaluation;
-            \item GreeDI-style distributed candidate sharing.
-        \end{itemize}
-    \end{itemize}
+\begin{frame}{Project at a Glance}
+    \begin{columns}[T,onlytextwidth]
+        \begin{column}{0.53\linewidth}
+            \begin{itemize}
+                \item \textbf{Topic:} Influence Maximization.
+                \item \textbf{Problem:} choose $k$ seed nodes to maximize expected network diffusion.
+                \item \textbf{Algorithmic lens:} monotone submodular maximization, greedy approximation, CELF lazy evaluation.
+                \item \textbf{Extension:} GreeDI-style local candidate sharing under a communication budget.
+            \end{itemize}
+        \end{column}
+        \begin{column}{0.43\linewidth}
+            \metricbox{Main empirical message}{Quality, runtime, and communication form a real tradeoff.}
+            \metricbox{Best theory-to-practice result}{CELF cuts large-scale spread evaluations by about 74\%.}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}{Motivation and Storyline}
+    \begin{columns}[T,onlytextwidth]
+        \begin{column}{0.48\linewidth}
+            \begin{block}{Why influence maximization?}
+                \begin{itemize}
+                    \item Diffusion appears in viral marketing, public-health messaging, and misinformation control.
+                    \item The computational question is simple to state but hard to solve exactly.
+                    \item It gives a clean bridge from network data applications to approximation algorithms.
+                \end{itemize}
+            \end{block}
+        \end{column}
+        \begin{column}{0.48\linewidth}
+            \begin{block}{Presentation flow}
+                \begin{itemize}
+                    \item Formalize IC influence spread as a submodular objective.
+                    \item Compare greedy, CELF, and lightweight structural baselines.
+                    \item Study what changes when only local candidates can be communicated.
+                \end{itemize}
+            \end{block}
+        \end{column}
+    \end{columns}
 \end{frame}
 
 \begin{frame}{Problem Formulation}
@@ -41,185 +87,202 @@
     \begin{itemize}
         \item $G=(V,E,p)$ is a directed graph with edge activation probability $p_{uv}$.
         \item $\sigma(S)$ is the expected number of active nodes after diffusion.
-        \item We use the Independent Cascade model:
+        \item Independent Cascade model:
         \begin{itemize}
-            \item newly active node $u$ gets one chance to activate each inactive out-neighbor $v$;
-            \item activation succeeds independently with probability $p_{uv}$.
+            \item a newly active node gets one chance to activate each inactive out-neighbor;
+            \item each activation attempt succeeds independently with probability $p_{uv}$.
         \end{itemize}
+        \item Experiments use the weighted-cascade rule $p_{uv}=1/\mathrm{indegree}(v)$.
     \end{itemize}
 \end{frame}
 
-\begin{frame}{Algorithmic Foundation}
-    \begin{itemize}
-        \item Under IC diffusion, $\sigma(S)$ is monotone and submodular.
-    \end{itemize}
-    \[
-        \sigma(A\cup\{v\})-\sigma(A)
-        \geq
-        \sigma(B\cup\{v\})-\sigma(B)
-    \]
-    \[
-        A\subseteq B,\quad v\notin B
-    \]
-    \begin{itemize}
-        \item Greedy obtains a $(1-1/e)$ approximation for the exact objective.
-        \item CELF uses diminishing returns to skip repeated marginal-gain evaluations.
-    \end{itemize}
+\begin{frame}{Why Greedy Applies}
+    \begin{columns}[T,onlytextwidth]
+        \begin{column}{0.52\linewidth}
+            \begin{itemize}
+                \item IC expected spread is \textbf{monotone}: adding seeds cannot reduce spread.
+                \item It is also \textbf{submodular}: marginal gain decreases as the seed set grows.
+            \end{itemize}
+            \[
+                \sigma(A\cup\{v\})-\sigma(A)
+                \geq
+                \sigma(B\cup\{v\})-\sigma(B)
+            \]
+            \[
+                A\subseteq B,\quad v\notin B
+            \]
+        \end{column}
+        \begin{column}{0.42\linewidth}
+            \metricbox{Approximation}{Greedy gives $(1-1/e)$ for the exact objective.}
+            \metricbox{Acceleration}{CELF treats old marginal gains as upper bounds.}
+        \end{column}
+    \end{columns}
 \end{frame}
 
 \begin{frame}{Implemented Methods}
-    \begin{itemize}
-        \item Baselines:
-        \begin{itemize}
-            \item random seed selection;
-            \item weighted out-degree;
-            \item PageRank.
-        \end{itemize}
-        \item Centralized methods:
-        \begin{itemize}
-            \item Monte Carlo greedy;
-            \item CELF lazy greedy.
-        \end{itemize}
-        \item Distributed method:
-        \begin{itemize}
-            \item partition nodes into $m$ parts;
-            \item each worker sends at most $q$ local candidates;
-            \item coordinator runs greedy on the merged candidate pool.
-        \end{itemize}
-    \end{itemize}
+    \begin{columns}[T,onlytextwidth]
+        \begin{column}{0.31\linewidth}
+            \begin{block}{Baselines}
+                \begin{itemize}
+                    \item Random seeds
+                    \item Weighted out-degree
+                    \item PageRank
+                \end{itemize}
+            \end{block}
+        \end{column}
+        \begin{column}{0.31\linewidth}
+            \begin{block}{Centralized}
+                \begin{itemize}
+                    \item Monte Carlo greedy
+                    \item CELF lazy greedy
+                    \item Fair re-evaluation of final seed sets
+                \end{itemize}
+            \end{block}
+        \end{column}
+        \begin{column}{0.31\linewidth}
+            \begin{block}{Distributed}
+                \begin{itemize}
+                    \item $m\in\{2,4,8\}$ partitions
+                    \item local budget $q\in\{k,2k,5k\}$
+                    \item coordinator greedy on merged candidates
+                \end{itemize}
+            \end{block}
+        \end{column}
+    \end{columns}
 \end{frame}
 
-\begin{frame}{Experimental Setup}
-    \begin{itemize}
-        \item Graphs:
-        \begin{itemize}
-            \item Erdos--Renyi, $n=40,70$;
-            \item Barabasi--Albert, $n=40,70$;
-            \item Watts--Strogatz, $n=60$;
-            \item Karate Club, $n=34$.
-        \end{itemize}
-        \item Seed budget: $k=5$ or $k=6$.
-        \item Edge probabilities: weighted-cascade rule.
-        \item Distributed sweep:
-        \[
-            m\in\{2,4,8\},\qquad q\in\{k,2k,5k\}.
-        \]
-    \end{itemize}
+\begin{frame}{Implementation and Experiment Design}
+    \begin{columns}[T,onlytextwidth]
+        \begin{column}{0.48\linewidth}
+            \begin{block}{Code modules}
+                \begin{itemize}
+                    \item \texttt{simulation.py}: IC diffusion and spread estimation
+                    \item \texttt{greedy.py}: greedy and CELF
+                    \item \texttt{distributed.py}: local candidate sharing
+                    \item \texttt{experiments.py}: benchmark sweep and CSV output
+                \end{itemize}
+            \end{block}
+        \end{column}
+        \begin{column}{0.48\linewidth}
+            \begin{block}{Benchmarks}
+                \begin{itemize}
+                    \item Small: ER/BA/WS with $n=40,70$, plus Karate $n=34$
+                    \item Large: ER/BA/WS with $n=50,100,200$, plus Karate
+                    \item Seed budget: $k=5,6$ for small; $k=10$ for large synthetic graphs
+                    \item Main metrics: spread, ratio to greedy, runtime, evaluations, transmitted candidates
+                \end{itemize}
+            \end{block}
+        \end{column}
+    \end{columns}
 \end{frame}
 
-\begin{frame}{Metrics}
-    \begin{itemize}
-        \item Estimated influence spread.
-        \item Runtime.
-        \item Number of spread evaluations.
-        \item Distributed quality ratio:
-        \[
-            \rho =
-            \frac{\sigma(S_{\mathrm{dist}})}
-                 {\sigma(S_{\mathrm{greedy}})}.
-        \]
-        \item Communication proxy: number of transmitted candidates.
-    \end{itemize}
+\begin{frame}{Benchmark Graphs}
+    \centering
+    \includegraphics[height=0.72\textheight,keepaspectratio]{outputs/influence_maximization/figures/graphs/small_graph_structures.png}
+    \vspace{0.3em}
+
+    \small The graph families intentionally stress different structures: random connectivity, hubs, small-world locality, and a small real social network.
 \end{frame}
 
-\begin{frame}{Overall Results}
+\begin{frame}{Core Results on the Large Preset}
     \begin{table}
     \centering
     \small
     \begin{tabular}{lrrrr}
     \toprule
-    Method & Spread & Ratio & Time & Eval. \\
+    Method & Spread & Ratio & Time (s) & Eval. \\
     \midrule
-    Random & 16.58 & 0.93 & 0.00 & 1.0 \\
-    Degree & 24.42 & 1.37 & 0.00 & 1.0 \\
-    PageRank & 22.92 & 1.27 & 0.00 & 1.0 \\
-    Greedy & 18.08 & 1.00 & 0.06 & 283.5 \\
-    CELF & 18.92 & 1.04 & 0.02 & 112.0 \\
-    Best dist. avg. & 24.00 & 1.34 & 0.32 & 359.5 \\
+    Random & 31.59 & 0.79 & 0.00 & 1.0 \\
+    Weighted degree & 43.71 & 1.07 & 0.01 & 1.0 \\
+    PageRank & 35.19 & 0.89 & 0.00 & 1.0 \\
+    Greedy & 40.43 & 1.00 & 4.67 & 1026.5 \\
+    CELF & 40.05 & 0.99 & 0.77 & 266.2 \\
     \bottomrule
     \end{tabular}
     \end{table}
     \begin{itemize}
-        \item CELF reduces evaluations while keeping similar quality to greedy.
-        \item Degree/PageRank are strong on these small weighted-cascade graphs.
+        \item CELF keeps essentially the same average quality as greedy while using many fewer spread evaluations.
+        \item Degree is a strong structural baseline under weighted-cascade probabilities, especially on hub-heavy graphs.
     \end{itemize}
 \end{frame}
 
-\begin{frame}{Influence Spread}
+\begin{frame}{Quality Across Graph Instances}
     \centering
-    \includegraphics[width=0.94\linewidth]{../outputs/influence_maximization/figures/estimated_spread.png}
+    \includegraphics[width=0.49\linewidth]{outputs/influence_maximization/figures/estimated_spread_large.png}
+    \includegraphics[width=0.49\linewidth]{outputs/influence_maximization/figures/quality_ratio_to_greedy_large.png}
+    \vspace{0.2em}
+
+    \small Ratios are computed after re-evaluating every final seed set with the same evaluation seed for that graph.
 \end{frame}
 
-\begin{frame}{Distributed Tradeoff}
-    \begin{table}
-    \centering
-    \scriptsize
-    \begin{tabular}{lrrrrr}
-    \toprule
-    $(m,q/k)$ & Spread & Ratio & Time & Eval. & Cand. \\
-    \midrule
-    $(2,1)$ & 21.58 & 1.19 & 0.30 & 321.5 & 11.0 \\
-    $(2,2)$ & 21.00 & 1.16 & 0.64 & 591.5 & 22.0 \\
-    $(2,5)$ & 21.50 & 1.20 & 1.37 & 1021.5 & 49.0 \\
-    $(4,1)$ & 24.00 & 1.34 & 0.32 & 359.5 & 22.0 \\
-    $(4,2)$ & 21.50 & 1.18 & 0.61 & 599.8 & 43.0 \\
-    $(4,5)$ & 22.08 & 1.22 & 0.71 & 683.8 & 52.3 \\
-    $(8,1)$ & 22.00 & 1.21 & 0.42 & 430.5 & 43.0 \\
-    $(8,2)$ & 21.00 & 1.16 & 0.58 & 503.2 & 52.3 \\
-    $(8,5)$ & 21.92 & 1.22 & 0.51 & 503.2 & 52.3 \\
-    \bottomrule
-    \end{tabular}
-    \end{table}
-\end{frame}
-
-\begin{frame}{Quality and Communication}
-    \centering
-    \includegraphics[width=0.48\linewidth]{../outputs/influence_maximization/figures/quality_ratio_to_greedy.png}
-    \includegraphics[width=0.48\linewidth]{../outputs/influence_maximization/figures/transmitted_candidates.png}
+\begin{frame}{Distributed Communication Tradeoff}
+    \begin{columns}[T,onlytextwidth]
+        \begin{column}{0.47\linewidth}
+            \begin{table}
+            \centering
+            \scriptsize
+            \begin{tabular}{lrrrr}
+            \toprule
+            Budget & Ratio & Time & Eval. & Cand. \\
+            \midrule
+            small, $q=k$ & 0.97 & 0.23 & 364 & 25.0 \\
+            small, $q=2k$ & 0.96 & 0.42 & 557 & 38.8 \\
+            small, $q=5k$ & 0.94 & 0.63 & 727 & 50.6 \\
+            large, $q=k$ & 0.98 & 1.58 & 1242 & 41.1 \\
+            large, $q=2k$ & 0.96 & 3.36 & 2037 & 66.9 \\
+            large, $q=5k$ & 0.96 & 6.48 & 3044 & 98.4 \\
+            \bottomrule
+            \end{tabular}
+            \end{table}
+            \small Averaged over $m\in\{2,4,8\}$.
+        \end{column}
+        \begin{column}{0.49\linewidth}
+            \includegraphics[width=\linewidth]{outputs/influence_maximization/figures/transmitted_candidates_large.png}
+        \end{column}
+    \end{columns}
 \end{frame}
 
 \begin{frame}{Runtime and Evaluation Counts}
     \centering
-    \includegraphics[width=0.48\linewidth]{../outputs/influence_maximization/figures/runtime_seconds.png}
-    \includegraphics[width=0.48\linewidth]{../outputs/influence_maximization/figures/spread_evaluations.png}
+    \includegraphics[width=0.49\linewidth]{outputs/influence_maximization/figures/runtime_seconds_large.png}
+    \includegraphics[width=0.49\linewidth]{outputs/influence_maximization/figures/spread_evaluations_large.png}
+    \vspace{0.2em}
+
+    \small Distributed greedy performs extra local searches; it becomes attractive when workers run in parallel or full centralized search is constrained by data placement.
 \end{frame}
 
-\begin{frame}{Interpretation}
-    \begin{itemize}
-        \item Greedy theory applies to the exact submodular objective.
-        \item Our implementation uses Monte Carlo estimates during selection.
-        \item With small graphs and modest simulation counts, the selected seed set is noisy.
-        \item This explains why degree/PageRank and some distributed settings can outperform greedy after fair re-evaluation.
-        \item The experiment still reproduces the main algorithmic mechanisms:
-        \begin{itemize}
-            \item submodular greedy selection;
-            \item lazy marginal-gain reuse;
-            \item communication-limited candidate sharing.
-        \end{itemize}
-    \end{itemize}
-\end{frame}
-
-\begin{frame}{Limitations and Extensions}
-    \begin{itemize}
-        \item Current graphs are smaller than the proposal's full scalability target.
-        \item Monte Carlo simulation count is limited for runtime.
-        \item Future improvements:
-        \begin{itemize}
-            \item run more random seeds and report confidence intervals;
-            \item test Wiki-Vote or NetHEPT;
-            \item add RR-set based maximum coverage;
-            \item parallelize distributed worker computation.
-        \end{itemize}
-    \end{itemize}
+\begin{frame}{Interpretation and Limitations}
+    \begin{columns}[T,onlytextwidth]
+        \begin{column}{0.48\linewidth}
+            \begin{block}{What worked}
+                \begin{itemize}
+                    \item Reproduced the submodular greedy mechanism.
+                    \item CELF demonstrates a clear practical speedup.
+                    \item Distributed candidate sharing stays close to greedy quality in many cases.
+                \end{itemize}
+            \end{block}
+        \end{column}
+        \begin{column}{0.48\linewidth}
+            \begin{block}{What to state honestly}
+                \begin{itemize}
+                    \item Monte Carlo selection is noisy at course-scale simulation counts.
+                    \item Structural baselines can beat greedy after fair re-evaluation.
+                    \item Distributed runtime here is sequential; real speedup needs parallel workers.
+                \end{itemize}
+            \end{block}
+        \end{column}
+    \end{columns}
+    \vspace{0.4em}
+    \small Next steps: more random seeds, confidence intervals, larger real networks, deterministic partitions, and RR-set based maximum coverage.
 \end{frame}
 
 \begin{frame}{Conclusion}
     \begin{itemize}
-        \item Influence maximization connects modern network applications to classical approximation algorithms.
-        \item IC spread is monotone submodular, enabling greedy approximation.
-        \item CELF demonstrates how theory becomes practical speedup.
-        \item GreeDI-style candidate sharing highlights the cost of limited communication.
-        \item Empirical quality depends on graph structure and spread-estimation accuracy.
+        \item Influence maximization is a clean example of classical algorithms serving a modern network-data problem.
+        \item IC spread is monotone submodular, so greedy approximation gives the central theoretical anchor.
+        \item CELF shows how submodularity becomes practical acceleration.
+        \item GreeDI-style candidate sharing exposes the cost of limited communication.
+        \item The key lesson is not that one method always wins: graph structure, estimation accuracy, and communication budget all matter.
     \end{itemize}
 \end{frame}
 
