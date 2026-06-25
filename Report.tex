@@ -1,24 +1,39 @@
-\documentclass[11pt]{article}
+\documentclass[9pt]{extarticle}
 
-\usepackage[margin=1in]{geometry}
+\usepackage[margin=0.42in]{geometry}
 \usepackage{amsmath, amssymb}
 \usepackage{booktabs}
 \usepackage{graphicx}
+\usepackage[font=small,labelfont=bf,labelsep=colon]{caption}
 \usepackage[hypertexnames=false]{hyperref}
 \usepackage{enumitem}
 \usepackage{float}
-\setlist{leftmargin=*}
-\setlength{\parskip}{0.35em}
+\setlist{leftmargin=*,nosep}
+\setlength{\parskip}{0.04em}
 \setlength{\parindent}{0pt}
+\setlength{\textfloatsep}{0.18em}
+\setlength{\floatsep}{0.14em}
+\setlength{\intextsep}{0.14em}
+\setlength{\abovecaptionskip}{0.06em}
+\setlength{\belowcaptionskip}{0em}
+\setlength{\abovedisplayskip}{0.16em}
+\setlength{\belowdisplayskip}{0.16em}
+\setlength{\tabcolsep}{3.8pt}
+\renewcommand{\arraystretch}{0.86}
+\makeatletter
+\renewcommand\section{\@startsection{section}{1}{\z@}{0.28em}{0.08em}{\normalfont\large\bfseries}}
+\renewcommand\subsection{\@startsection{subsection}{2}{\z@}{0.2em}{0.05em}{\normalfont\normalsize\bfseries}}
+\makeatother
 
-\title{\textbf{Experimental Report}\\
-Submodular Optimization and Greedy Approximation for Distributed Influence Maximization}
-\author{Yixin Chen \and Bichi Zhang \and Yaoqin Ye}
-\date{CS240: Algorithm Design and Analysis, Spring 2026}
-
+\title{\vspace{-2.2em}\textbf{Experimental Report}\\[0.35em]
+\large\textbf{Submodular Optimization and Greedy Approximation for}\\[-0.05em]
+\large\textbf{Distributed Influence Maximization}\vspace{-0.9em}}
+\author{Yixin Chen \qquad Bichi Zhang \qquad Yaoqin Ye}
+\date{CS240: Algorithm Design and Analysis, Spring 2026\vspace{-1.35em}}
 \begin{document}
 
 \maketitle
+\vspace{-0.75em}
 
 \begin{abstract}
 This project studies influence maximization, a classical network optimization
@@ -180,7 +195,7 @@ network.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.92\linewidth]{outputs/influence_maximization/figures/graphs/small_graph_structures.png}
+\includegraphics[width=0.43\linewidth]{outputs/influence_maximization/figures/graphs/small_graph_structures.png}
 \caption{Small benchmark graph structures colored by weighted out-degree.}
 \label{fig:graph-structures}
 \end{figure}
@@ -230,15 +245,25 @@ theorem: the theorem compares exact greedy to the optimal seed set for the
 exact submodular objective, while our implementation selects using noisy Monte
 Carlo estimates and then re-evaluates final seed sets with another random seed.
 
-CELF behaves as expected. It obtains essentially the same average spread as
+CELF behaves as expected. Figures~\ref{fig:estimated-spread} and~\ref{fig:quality-ratio} show that it obtains essentially the same average spread as
 greedy, with ratio 0.99, while reducing spread evaluations from 1026.5 to
 266.2 and runtime from 4.67 seconds to 0.77 seconds on average. This is the
 clearest theory-to-practice result of the reproduction.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.92\linewidth]{outputs/influence_maximization/figures/estimated_spread_large.png}
+\begin{minipage}{0.48\linewidth}
+\centering
+\includegraphics[width=\linewidth]{outputs/influence_maximization/figures/estimated_spread_large.png}
 \caption{Estimated IC spread on the large preset.}
+\label{fig:estimated-spread}
+\end{minipage}\hfill
+\begin{minipage}{0.48\linewidth}
+\centering
+\includegraphics[width=\linewidth]{outputs/influence_maximization/figures/quality_ratio_to_greedy_large.png}
+\caption{Quality ratio relative to centralized greedy on the large preset.}
+\label{fig:quality-ratio}
+\end{minipage}
 \end{figure}
 
 \subsection{Distributed Communication Tradeoff}
@@ -268,7 +293,7 @@ $(8,5)$ & 36.72 & 0.93 & 3.12 & 2080.9 & 108.4 \\
 \end{tabular}
 \end{table}
 
-The distributed results show the expected cost side of the tradeoff clearly:
+Figure~\ref{fig:transmitted-candidates} shows the expected cost side of the tradeoff clearly:
 larger local budgets increase transmitted candidates and usually increase
 spread evaluations. The quality side is not monotone. The best average
 distributed setting in the large preset is $(m,q/k)=(2,1)$, which is essentially
@@ -281,19 +306,14 @@ useful.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.92\linewidth]{outputs/influence_maximization/figures/quality_ratio_to_greedy_large.png}
-\caption{Quality ratio relative to centralized greedy on the large preset.}
-\end{figure}
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.92\linewidth]{outputs/influence_maximization/figures/transmitted_candidates_large.png}
+\includegraphics[width=0.45\linewidth]{outputs/influence_maximization/figures/transmitted_candidates_large.png}
 \caption{Communication proxy: number of transmitted candidates on the large preset.}
+\label{fig:transmitted-candidates}
 \end{figure}
 
 \subsection{Runtime and Evaluation Counts}
 
-Centralized greedy becomes noticeably more expensive on the large preset:
+Figures~\ref{fig:spread-evaluations} and~\ref{fig:runtime} show that centralized greedy becomes noticeably more expensive on the large preset:
 average spread evaluations rise to 1026.5. CELF reduces this to 266.2 by
 reusing marginal-gain upper bounds. Distributed variants perform more total
 evaluations because each worker runs a local greedy phase and the coordinator
@@ -305,14 +325,18 @@ workers in parallel.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.92\linewidth]{outputs/influence_maximization/figures/spread_evaluations_large.png}
-\caption{Number of spread evaluations on the large preset. CELF reduces evaluations compared with naive greedy.}
-\end{figure}
-
-\begin{figure}[H]
+\begin{minipage}{0.48\linewidth}
 \centering
-\includegraphics[width=0.92\linewidth]{outputs/influence_maximization/figures/runtime_seconds_large.png}
+\includegraphics[width=\linewidth]{outputs/influence_maximization/figures/spread_evaluations_large.png}
+\caption{Number of spread evaluations on the large preset. CELF reduces evaluations compared with naive greedy.}
+\label{fig:spread-evaluations}
+\end{minipage}\hfill
+\begin{minipage}{0.48\linewidth}
+\centering
+\includegraphics[width=\linewidth]{outputs/influence_maximization/figures/runtime_seconds_large.png}
 \caption{Wall-clock runtime on the large preset.}
+\label{fig:runtime}
+\end{minipage}
 \end{figure}
 
 \section{Deviations, Limitations, and Optional Extensions}
@@ -403,3 +427,9 @@ R. Barik, W. Cappa, S. M. Ferdous, M. Minutoli, M. Halappanavar, and A. Kalyanar
 \end{thebibliography}
 
 \end{document}
+
+
+
+
+
+
